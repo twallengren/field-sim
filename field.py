@@ -1,29 +1,14 @@
 import jax.numpy as jnp
-from jax import vmap
-
-import jax.numpy as jnp
 
 class Field:
-    def __init__(self, name, shape, dx=1.0, units=None, is_dynamic=True, init_fn=None):
-        """
-        Represents a scalar field defined over a 2D spatial domain.
-
-        Args:
-            name: Identifier for the field.
-            shape: Tuple (ny, nx) giving grid size.
-            dx: Grid spacing (assumed uniform).
-            units: Optional string for units (for clarity).
-            is_dynamic: Whether this field evolves over time.
-            init_fn: Function f(x, y) to generate initial values. If None, defaults to zeros.
-        """
+    def __init__(self, name, shape, dx=1.0, units=None, is_dynamic=True, init_fn=None, bc_type="neumann"):
         self.name = name
         self.shape = shape
         self.dx = dx
         self.units = units
         self.is_dynamic = is_dynamic
-
-        # Generate initial condition from init_fn(x, y)
         self.values = self._initialize(init_fn)
+        self.bc_type = bc_type
 
     def _initialize(self, fn):
         ny, nx = self.shape
@@ -43,24 +28,50 @@ class Field:
 
     def gradient(self):
         """
-        Compute spatial gradient using central differences.
-        Returns: tuple (df/dx, df/dy), each with shape = self.shape
+        Returns df/dx, df/dy using second-order central differences.
+        """
+        df_dy, df_dx = jnp.gradient(self.values, self.dx)
+        return df_dx, df_dy
+
+    def laplacian(self):
+        """
+        Computes Laplacian using finite differences: ∇²f = d²f/dx² + d²f/dy²
+        """
+        df2_dx = jnp.gradient(jnp.gradient(self.values, self.dx, axis=1), self.dx, axis=1)
+        df2_dy = jnp.gradient(jnp.gradient(self.values, self.dx, axis=0), self.dx, axis=0)
+        return df2_dx + df2_dy
+
+    def apply_bc(self):
+        if self.bc_type == "neumann":
+            self.apply_neumann_bc()
+        elif self.bc_type == "leaky_neumann":
+            self.apply_leaky_neumann_bc()
+        else:
+            raise ValueError(f"Unsupported boundary condition type: {type}")
+
+    def apply_neumann_bc(self):
+        f = self.values
+        f = f.at[0, :].set(f[1, :])         # top
+        f = f.at[-1, :].set(f[-2, :])       # bottom
+        f = f.at[:, 0].set(f[:, 1])         # left
+        f = f.at[:, -1].set(f[:, -2])       # right
+        self.values = f
+
+    def apply_leaky_neumann_bc(self, eta=0.1):
+        """
+        Applies a directional Neumann BC where the derivative normal to the boundary
+        is set to -eta (i.e. controlled outflow), while the tangential derivative is 0.
         """
         f = self.values
         dx = self.dx
 
-        df_dx = (jnp.roll(f, -1, axis=1) - jnp.roll(f, 1, axis=1)) / (2 * dx)
-        df_dy = (jnp.roll(f, -1, axis=0) - jnp.roll(f, 1, axis=0)) / (2 * dx)
+        # Left/right boundaries (∂f/∂x = ±η)
+        f = f.at[:, 0].set(f[:, 1] - eta * dx)  # left (outflow: -η)
+        f = f.at[:, -1].set(f[:, -2] - eta * dx)  # right (outflow: -η)
 
-        return df_dx, df_dy
+        # Top/bottom boundaries (∂f/∂y = ±η)
+        f = f.at[0, :].set(f[1, :] - eta * dx)  # top
+        f = f.at[-1, :].set(f[-2, :] - eta * dx)  # bottom
 
-    def apply_neumann_bc(self):
-        """
-        Apply zero-flux (Neumann) boundary conditions by copying inward neighbors.
-        """
-        f = self.values
-        f = f.at[0, :].set(f[1, :])           # top
-        f = f.at[-1, :].set(f[-2, :])         # bottom
-        f = f.at[:, 0].set(f[:, 1])           # left
-        f = f.at[:, -1].set(f[:, -2])         # right
         self.values = f
+

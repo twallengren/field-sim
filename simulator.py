@@ -41,7 +41,7 @@ class Simulator:
         for name, field in self.fields.items():
             if name in new_values:
                 field.set_values(new_values[name])
-                field.apply_neumann_bc()
+                field.apply_bc()
 
         self.time += self.dt
 
