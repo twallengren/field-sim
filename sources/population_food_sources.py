@@ -33,7 +33,7 @@ class FoodLimitedPopulationDecaySource(SourceTerm):
         P = fields["pop"].get_values()
         F = fields["food"].get_values()
         sigmoid = 1 / (1 + jnp.exp(-10 * (P - F)))
-        return -self.gamma * (P-F) * sigmoid
+        return -self.gamma * P * (P - F + 1) * sigmoid
 
 class PopulationResourceGrowth(SourceTerm):
     def __init__(self, target, gamma=1.0):
@@ -122,3 +122,21 @@ class RenewableResourceRegenerationSource(SourceTerm):
     def evaluate(self, fields):
         R = fields[self.target].get_values()
         return self.regen_rate * R * (1 - R / self.carrying_capacity)
+
+import jax.numpy as jnp
+from source_term import SourceTerm
+
+class InfrastructureBuildSource(SourceTerm):
+    def __init__(self, target, eta=1.0, decay=0.01):
+        """
+        Infrastructure growth: dI/dt = eta * P * R - decay * I
+        """
+        self.eta = eta
+        self.decay = decay
+        super().__init__(name="Infrastructure Growth", target_field_name=target, expression_fn=None)
+
+    def evaluate(self, fields):
+        P = fields["pop"].get_values()
+        R = fields["res"].get_values()
+        I = fields[self.target].get_values()
+        return self.eta * P * R - self.decay * I

@@ -2,12 +2,12 @@ from jax import numpy as jnp
 from simulation_config import SimulationConfig
 from lagrangians.population_food_terms import (
     PopulationDiffusion,
-    FoodDiffusion,
+    FoodDiffusion, FoodTransportToInfraTerm,
 )
 from sources.population_food_sources import (
     PopulationGrowthSource,
     FoodConsumptionSource, FoodDecaySource, ConstantFoodSource, PopulationDecaySource, FoodLimitedPopulationDecaySource,
-    ResourceConsumptionSource, PopulationResourceGrowth
+    ResourceConsumptionSource, PopulationResourceGrowth, InfrastructureBuildSource
 )
 
 grid_dim = 10 # each edge is grid_dim km long
@@ -76,11 +76,19 @@ def get_config():
                 "init_fn": initial_resources,
                 "is_dynamic": True,
                 "bc_type": "neumann"
+            },
+            "infra": {
+                "shape": (num_of_coordinates, num_of_coordinates),
+                "dx": dx,
+                "init_fn": lambda x, y: jnp.zeros_like(x),  # Initialize with zeros
+                "is_dynamic": True,
+                "bc_type": "neumann"
             }
         },
         lagrangian_terms=[
             PopulationDiffusion(alpha=0.6),
-            FoodDiffusion(alpha=0.5),
+            FoodDiffusion(alpha=0.7),
+            FoodTransportToInfraTerm(kappa=0.01)
         ],
         sources=[
             PopulationGrowthSource(target="pop", gamma=1.0),
@@ -90,7 +98,8 @@ def get_config():
             FoodConsumptionSource(target="food", rho=1.0),
             FoodDecaySource(target="food", lamb=0.1),
             ConstantFoodSource(target="food", value=10.0, mask_fn=None),#source_mask.call_function),
-            ResourceConsumptionSource(target="res", rate=0.1)
+            ResourceConsumptionSource(target="res", rate=0.1),
+            InfrastructureBuildSource(target="infra", eta=1.0, decay=0.01)
         ],
         dt=dt,
         steps=steps
