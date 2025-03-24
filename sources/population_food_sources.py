@@ -35,6 +35,16 @@ class FoodLimitedPopulationDecaySource(SourceTerm):
         sigmoid = 1 / (1 + jnp.exp(-10 * (P - F)))
         return -self.gamma * (P-F) * sigmoid
 
+class PopulationResourceGrowth(SourceTerm):
+    def __init__(self, target, gamma=1.0):
+        super().__init__(name="Population Resource Growth", target_field_name=target, expression_fn=None)
+        self.gamma = gamma
+
+    def evaluate(self, fields):
+        P = fields["pop"].get_values()
+        R = fields["res"].get_values()
+        sigmoid = 1 / (1 + jnp.exp(-10 * (R - 0.5)))
+        return self.gamma * P * sigmoid
 
 class FoodConsumptionSource(SourceTerm):
     def __init__(self, target, rho=1.0):
@@ -84,3 +94,31 @@ class ConstantFoodSource(SourceTerm):
             source *= mask
 
         return source
+
+class ResourceConsumptionSource(SourceTerm):
+    def __init__(self, target, rate=1.0):
+        """
+        Models resource depletion due to population presence:
+        dR/dt = -rate * P
+        """
+        self.rate = rate
+        super().__init__(name="Resource Consumption", target_field_name=target, expression_fn=None)
+
+    def evaluate(self, fields):
+        P = fields["pop"].get_values()
+        return -self.rate * P
+
+
+class RenewableResourceRegenerationSource(SourceTerm):
+    def __init__(self, target, regen_rate=0.1, carrying_capacity=100.0):
+        """
+        Logistic resource regeneration:
+        dR/dt = regen_rate * R * (1 - R / carrying_capacity)
+        """
+        self.regen_rate = regen_rate
+        self.carrying_capacity = carrying_capacity
+        super().__init__(name="Renewable Resource Regeneration", target_field_name=target, expression_fn=None)
+
+    def evaluate(self, fields):
+        R = fields[self.target].get_values()
+        return self.regen_rate * R * (1 - R / self.carrying_capacity)

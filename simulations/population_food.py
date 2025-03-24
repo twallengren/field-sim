@@ -6,7 +6,8 @@ from lagrangians.population_food_terms import (
 )
 from sources.population_food_sources import (
     PopulationGrowthSource,
-    FoodConsumptionSource, FoodDecaySource, ConstantFoodSource, PopulationDecaySource, FoodLimitedPopulationDecaySource
+    FoodConsumptionSource, FoodDecaySource, ConstantFoodSource, PopulationDecaySource, FoodLimitedPopulationDecaySource,
+    ResourceConsumptionSource, PopulationResourceGrowth
 )
 
 grid_dim = 10 # each edge is grid_dim km long
@@ -16,11 +17,16 @@ def initial_pop(x, y):
     return bump
 
 def initial_food(x, y):
-    return 0*jnp.exp(-((x - grid_dim/2)**2 + (y - grid_dim/2)**2))
+    return 50*jnp.exp(-((x - grid_dim/2)**2 + (y - grid_dim/2)**2))
+
+def initial_resources(x, y):
+    x0 = 3*jnp.cos(jnp.pi/2) + grid_dim/2
+    y0 = 3*jnp.sin(jnp.pi/2) + grid_dim/2
+    return 100*jnp.exp(-((x - x0)**2 + (y - y0)**2) / 0.5)
 
 def farm_region(x, y, t):
-    tol = 0.01
-    x0 = jnp.cos(2*jnp.pi*t/365) + 2*grid_dim/3
+    tol = 0.5
+    x0 = jnp.cos(2*jnp.pi*t/365) + grid_dim/2
     y0 = jnp.sin(2*jnp.pi*t/365) + grid_dim/2
     return jnp.exp(-((x - x0)**2 + (y - y0)**2) / 0.5) > tol
 
@@ -40,7 +46,7 @@ class SourceMask:
 def get_config():
 
     num_of_coordinates = 100
-    num_years = 5
+    num_years = 20
     days_per_frame = 5
     dt = days_per_frame / 365
     steps = int(num_years // dt)
@@ -63,19 +69,28 @@ def get_config():
                 "init_fn": initial_food,
                 "is_dynamic": True,
                 "bc_type": "neumann"
+            },
+            "res": {
+                "shape": (num_of_coordinates, num_of_coordinates),
+                "dx": dx,
+                "init_fn": initial_resources,
+                "is_dynamic": True,
+                "bc_type": "neumann"
             }
         },
         lagrangian_terms=[
-            PopulationDiffusion(alpha=0.5),
+            PopulationDiffusion(alpha=0.6),
             FoodDiffusion(alpha=0.5),
         ],
         sources=[
-            PopulationGrowthSource(target="pop", gamma=2),
+            PopulationGrowthSource(target="pop", gamma=1.0),
             PopulationDecaySource(target="pop", gamma=0.1),
             FoodLimitedPopulationDecaySource(target="pop", gamma=1.0),
+            PopulationResourceGrowth(target="pop", gamma=2.0),
             FoodConsumptionSource(target="food", rho=1.0),
             FoodDecaySource(target="food", lamb=0.1),
-            ConstantFoodSource(target="food", value=20.0, mask_fn=source_mask.call_function)
+            ConstantFoodSource(target="food", value=10.0, mask_fn=None),#source_mask.call_function),
+            ResourceConsumptionSource(target="res", rate=0.1)
         ],
         dt=dt,
         steps=steps
