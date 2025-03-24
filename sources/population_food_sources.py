@@ -8,29 +8,32 @@ class PopulationGrowthSource(SourceTerm):
         self.gamma = gamma
 
     def evaluate(self, fields):
-        F = fields["food"].get_values()
         P = fields["pop"].get_values()
-        return self.gamma * F * P
+        F = fields["food"].get_values()
+        sigmoid = 1 / (1 + jnp.exp(-10 * (F - P)))
+        return self.gamma * P * sigmoid
 
+class PopulationDecaySource(SourceTerm):
+    def __init__(self, target, gamma=1.0):
+        super().__init__(name="Population Decay", target_field_name=target, expression_fn=None)
+        self.gamma = gamma
+
+    # death rate
+    def evaluate(self, fields):
+        P = fields["pop"].get_values()
+        return -self.gamma * P
 
 class FoodLimitedPopulationDecaySource(SourceTerm):
-    def __init__(self, target, delta=0.1, epsilon=1e-3):
-        """
-        Food-limited decay source for population:
-        decay = -delta * P * [1 / (1 + F / (P + epsilon))]
+    def __init__(self, target, gamma=1.0):
+        super().__init__(name="Population Decay", target_field_name=target, expression_fn=None)
+        self.gamma = gamma
 
-        When food is abundant (F >> P), decay ≈ 0.
-        When food is scarce (F << P), decay ≈ -delta * P.
-        """
-        self.delta = delta
-        self.epsilon = epsilon
-        super().__init__(name="Food-Limited Population Decay", target_field_name=target, expression_fn=None)
-
+    # If P-F is greater than 0, we decay
     def evaluate(self, fields):
         P = fields["pop"].get_values()
         F = fields["food"].get_values()
-        scarcity_factor = 1.0 / (1.0 + F / (P + self.epsilon))
-        return -self.delta * P * scarcity_factor
+        sigmoid = 1 / (1 + jnp.exp(-10 * (P - F)))
+        return -self.gamma * (P-F) * sigmoid
 
 
 class FoodConsumptionSource(SourceTerm):
@@ -40,7 +43,9 @@ class FoodConsumptionSource(SourceTerm):
 
     def evaluate(self, fields):
         P = fields["pop"].get_values()
-        return -self.rho * P
+        F = fields["food"].get_values()
+        sigmoid = 1 / (1 + jnp.exp(-10 * (F - 0.5)))
+        return -self.rho * P * sigmoid
 
 
 class FoodDecaySource(SourceTerm):

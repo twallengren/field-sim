@@ -6,50 +6,77 @@ from lagrangians.population_food_terms import (
 )
 from sources.population_food_sources import (
     PopulationGrowthSource,
-    FoodConsumptionSource, FoodDecaySource, FoodLimitedPopulationDecaySource, ConstantFoodSource
+    FoodConsumptionSource, FoodDecaySource, ConstantFoodSource, PopulationDecaySource, FoodLimitedPopulationDecaySource
 )
 
+grid_dim = 10 # each edge is grid_dim km long
+
 def initial_pop(x, y):
-    bump1 = 3 * jnp.exp(-((x - 1.5)**2 + (y - 5)**2))
-    bump2 = 1 * jnp.exp(-((x - 8.5)**2 + (y - 5)**2))
-    return bump1 + bump2
+    bump = 10 * jnp.exp(-((x - grid_dim/2)**2 + (y - grid_dim/2)**2))
+    return bump
 
 def initial_food(x, y):
-    return 0*jnp.exp(-((x - 5)**2 + (y - 5)**2))
+    return 0*jnp.exp(-((x - grid_dim/2)**2 + (y - grid_dim/2)**2))
 
-def farm_region(x, y):
-    return (jnp.exp(-((x - 5)**2 + (y - 7.5)**2) / 0.5) > 0.5) | (jnp.exp(-((x - 5)**2 + (y - 2.5)**2) / 0.5) > 0.5)
+def farm_region(x, y, t):
+    tol = 0.01
+    x0 = jnp.cos(2*jnp.pi*t/365) + 2*grid_dim/3
+    y0 = jnp.sin(2*jnp.pi*t/365) + grid_dim/2
+    return jnp.exp(-((x - x0)**2 + (y - y0)**2) / 0.5) > tol
+
+class SourceMask:
+
+    def __init__(self, mask_fn, step=1):
+        self.mask_fn = mask_fn
+        self.t = 0
+        self.step = step
+
+    def call_function(self, x, y):
+        value = self.mask_fn(x, y, self.t)
+        self.t += self.step
+        return value
+
 
 def get_config():
+
+    num_of_coordinates = 100
+    num_years = 5
+    days_per_frame = 5
+    dt = days_per_frame / 365
+    steps = int(num_years // dt)
+    dx = grid_dim/num_of_coordinates
+    source_mask = SourceMask(farm_region, days_per_frame)
+
     return SimulationConfig(
         name="Population–Food Interaction",
         field_defs={
             "pop": {
-                "shape": (100, 100),
-                "dx": 0.1,
+                "shape": (num_of_coordinates, num_of_coordinates),
+                "dx": dx,
                 "init_fn": initial_pop,
                 "is_dynamic": True,
                 "bc_type": "neumann"
             },
             "food": {
-                "shape": (100, 100),
-                "dx": 0.1,
+                "shape": (num_of_coordinates, num_of_coordinates),
+                "dx": dx,
                 "init_fn": initial_food,
                 "is_dynamic": True,
                 "bc_type": "neumann"
             }
         },
         lagrangian_terms=[
-            PopulationDiffusion(alpha=1.0),
-            FoodDiffusion(alpha=2.0),
+            PopulationDiffusion(alpha=0.5),
+            FoodDiffusion(alpha=0.5),
         ],
         sources=[
-            PopulationGrowthSource(target="pop", gamma=0.5),
-            FoodLimitedPopulationDecaySource(target="pop", delta=0.1),
+            PopulationGrowthSource(target="pop", gamma=2),
+            PopulationDecaySource(target="pop", gamma=0.1),
+            FoodLimitedPopulationDecaySource(target="pop", gamma=1.0),
             FoodConsumptionSource(target="food", rho=1.0),
-            FoodDecaySource(target="food", lamb=0.2),
-            ConstantFoodSource(target="food", value=1000.0, mask_fn=farm_region)
+            FoodDecaySource(target="food", lamb=0.1),
+            ConstantFoodSource(target="food", value=20.0, mask_fn=source_mask.call_function)
         ],
-        dt=1/365,
-        steps=365*5
+        dt=dt,
+        steps=steps
     )
