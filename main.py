@@ -6,10 +6,10 @@ cfg = get_config()
 runner = SimulationRunner(cfg)
 runner.run()
 runner.animate(
-    field_names=[POPULATION, FERTILITY, INDUSTRY, FOOD],
+    field_names=[POPULATION, FOOD],
     absolute=True,
     split=True,
-    split_rows=2,
+    split_rows=1,
     split_cols=2)
 
 if __name__ == "__main__":

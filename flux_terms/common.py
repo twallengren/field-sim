@@ -2,7 +2,7 @@ from flux_term import FluxTerm
 
 
 class AdvectionAlongGradientFlux(FluxTerm):
-    def __init__(self, target_field, gradient_field, kappa=1.0, scale_by_target=True):
+    def __init__(self, target_field, gradient_field, kappa=1.0, scale_by_target=False):
         """
         Models advection of `target_field` along the gradient of `gradient_field`.
 
