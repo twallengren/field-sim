@@ -1,5 +1,5 @@
 class SimulationConfig:
-    def __init__(self, name, field_defs, lagrangian_terms, sources, dt, steps):
+    def __init__(self, name, field_defs, lagrangian_terms, flux_terms, sources, dt, steps):
         """
         Args:
             name: str — name of the simulation
@@ -12,6 +12,7 @@ class SimulationConfig:
         self.name = name
         self.field_defs = field_defs
         self.lagrangian_terms = lagrangian_terms
+        self.flux_terms = flux_terms
         self.sources = sources
         self.dt = dt
         self.steps = steps

@@ -2,38 +2,7 @@ import jax.numpy as jnp
 
 from source_term import SourceTerm
 
-class PopulationGrowthSource(SourceTerm):
-    def __init__(self, target, gamma=1.0):
-        super().__init__(name="Population Growth", target_field_name=target, expression_fn=None)
-        self.gamma = gamma
 
-    def evaluate(self, fields):
-        P = fields["pop"].get_values()
-        F = fields["food"].get_values()
-        sigmoid = 1 / (1 + jnp.exp(-10 * (F - P)))
-        return self.gamma * P * sigmoid
-
-class PopulationDecaySource(SourceTerm):
-    def __init__(self, target, gamma=1.0):
-        super().__init__(name="Population Decay", target_field_name=target, expression_fn=None)
-        self.gamma = gamma
-
-    # death rate
-    def evaluate(self, fields):
-        P = fields["pop"].get_values()
-        return -self.gamma * P
-
-class FoodLimitedPopulationDecaySource(SourceTerm):
-    def __init__(self, target, gamma=1.0):
-        super().__init__(name="Population Decay", target_field_name=target, expression_fn=None)
-        self.gamma = gamma
-
-    # If P-F is greater than 0, we decay
-    def evaluate(self, fields):
-        P = fields["pop"].get_values()
-        F = fields["food"].get_values()
-        sigmoid = 1 / (1 + jnp.exp(-10 * (P - F)))
-        return -self.gamma * P * (P - F + 1) * sigmoid
 
 class PopulationResourceGrowth(SourceTerm):
     def __init__(self, target, gamma=1.0):
@@ -107,24 +76,6 @@ class ResourceConsumptionSource(SourceTerm):
     def evaluate(self, fields):
         P = fields["pop"].get_values()
         return -self.rate * P
-
-
-class RenewableResourceRegenerationSource(SourceTerm):
-    def __init__(self, target, regen_rate=0.1, carrying_capacity=100.0):
-        """
-        Logistic resource regeneration:
-        dR/dt = regen_rate * R * (1 - R / carrying_capacity)
-        """
-        self.regen_rate = regen_rate
-        self.carrying_capacity = carrying_capacity
-        super().__init__(name="Renewable Resource Regeneration", target_field_name=target, expression_fn=None)
-
-    def evaluate(self, fields):
-        R = fields[self.target].get_values()
-        return self.regen_rate * R * (1 - R / self.carrying_capacity)
-
-import jax.numpy as jnp
-from source_term import SourceTerm
 
 class InfrastructureBuildSource(SourceTerm):
     def __init__(self, target, eta=1.0, decay=0.01):

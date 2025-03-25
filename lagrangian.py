@@ -35,6 +35,10 @@ class Lagrangian:
         - wrt_field_name: the name of the field we're taking δF/δφ for
         """
 
+        if not self.terms:
+            shape = fields[wrt_field_name].get_values().shape
+            return jnp.zeros(shape, dtype=jnp.float32)
+
         # Step 1: Define a function where the target field is the input
         def energy_wrt_var_field(var_values):
             # Copy fields and replace the target with var_values

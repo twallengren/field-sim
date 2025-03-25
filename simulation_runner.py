@@ -24,6 +24,7 @@ class SimulationRunner:
             fields=self.fields,
             lagrangian=self.lagrangian,
             sources=config.sources,
+            flux_terms=config.flux_terms,
             dt=config.dt
         )
         self.history = []
