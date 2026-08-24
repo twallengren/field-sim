@@ -1,65 +1,68 @@
 import jax.numpy as jnp
-from jax.nn import softplus
+
+#: Boundary conditions the operator layer implements.  Zero-flux (homogeneous
+#: Neumann) is baked into the discrete operators themselves -- the diffusion
+#: energy simply omits boundary faces and the flux divergence zero-pads them --
+#: so ``bc_type`` is validated metadata, not something the field applies.
+SUPPORTED_BC_TYPES = ("neumann",)
+
 
 class Field:
-    def __init__(self, name, shape, dx=1.0, units=None, is_dynamic=True, init_fn=None, bc_type="neumann", vmin=None, vmax=None):
+    """A scalar field sampled at cell centres on a uniform square grid.
+
+    The domain is ``[0, nx*dx] x [0, ny*dx]`` and sample points are the **cell
+    centres** ``x_i = (i + 1/2) dx``.  (The previous ``x_i = i*dx`` put samples
+    on the left/bottom edges and covered only ``[0, L - dx]``, an off-by-one
+    domain; cell centring is also what makes the finite-volume flux and the
+    face-difference energy consistent, and gives the DCT-II cosine modes as
+    exact eigenvectors of the discrete Neumann Laplacian.)
+
+    A ``Field`` is now a thin container: values plus metadata.  It applies no
+    clipping and no boundary condition of its own.  In particular the old
+    ``_clip`` (``vmin + softplus(v - vmin)``) is gone: softplus is *strictly
+    increasing*, so it fabricated ``>= ln 2`` of mass in every empty cell every
+    time it ran (init, every ``set_values``, every ``apply_bc``), and that
+    ratchet was masking both a division by zero in the logistic source and an
+    over-large timestep.  Positivity is now a property of the discretisation,
+    backstopped by a *monitored* floor in :class:`~fieldsim.simulator.Simulator`.
+    """
+
+    def __init__(self, name, shape, dx=1.0, units=None, is_dynamic=True,
+                 init_fn=None, bc_type="neumann"):
+        if bc_type not in SUPPORTED_BC_TYPES:
+            raise ValueError(
+                f"Field {name!r}: unsupported boundary condition type "
+                f"{bc_type!r}; supported types are {list(SUPPORTED_BC_TYPES)}."
+            )
+        shape = tuple(shape)
+        if len(shape) != 2 or any(int(s) < 2 for s in shape):
+            raise ValueError(
+                f"Field {name!r}: shape must be a 2-tuple of ints >= 2, got {shape!r}."
+            )
+        if not dx > 0:
+            raise ValueError(f"Field {name!r}: dx must be positive, got {dx!r}.")
+
         self.name = name
         self.shape = shape
-        self.dx = dx
+        self.dx = float(dx)
         self.units = units
         self.is_dynamic = is_dynamic
-        self.vmin = vmin
-        self.vmax = vmax
         self.bc_type = bc_type
         self.values = self._initialize(init_fn)
-        self._clip()
 
     def _initialize(self, fn):
         ny, nx = self.shape
         if fn is None:
             return jnp.zeros((ny, nx))
 
-        x = jnp.arange(nx) * self.dx
-        y = jnp.arange(ny) * self.dx
+        # Cell-centred coordinates: x_i = (i + 1/2) dx.
+        x = (jnp.arange(nx) + 0.5) * self.dx
+        y = (jnp.arange(ny) + 0.5) * self.dx
         X, Y = jnp.meshgrid(x, y, indexing="xy")
         return fn(X, Y)
-
-    def _clip(self):
-        if self.vmin is not None and self.vmax is not None:
-            # Use a smooth clipping based on scaled tanh
-            k = 10.0  # Controls sharpness of transition
-            span = self.vmax - self.vmin
-            x_scaled = (self.values - self.vmin) / span
-            x_squashed = jnp.tanh(k * (x_scaled - 0.5))  # maps smoothly into (-1, 1)
-            x_shifted = 0.5 * (x_squashed + 1.0)  # maps into (0, 1)
-            self.values = self.vmin + span * x_shifted
-        elif self.vmin is not None:
-            self.values = self.vmin + softplus(self.values - self.vmin)
-        elif self.vmax is not None:
-            self.values = self.vmax - softplus(self.vmax - self.values)
 
     def get_values(self):
         return self.values
 
     def set_values(self, new_values):
         self.values = new_values
-        self._clip()
-
-    def gradient(self):
-        df_dy, df_dx = jnp.gradient(self.values, self.dx)
-        return df_dx, df_dy
-
-    def apply_bc(self):
-        if self.bc_type == "neumann":
-            self.apply_neumann_bc()
-        else:
-            raise ValueError(f"Unsupported boundary condition type: {self.bc_type}")
-        self._clip()
-
-    def apply_neumann_bc(self):
-        f = self.values
-        f = f.at[0, :].set(f[1, :])
-        f = f.at[-1, :].set(f[-2, :])
-        f = f.at[:, 0].set(f[:, 1])
-        f = f.at[:, -1].set(f[:, -2])
-        self.values = f

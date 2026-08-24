@@ -35,11 +35,8 @@ def get_config(seed: int = 0):
     def initial_food(x, y):
         return food_bump_fn(x, y)
 
-    num_of_coordinates = 250
-    num_years = 10
-    days_per_frame = 5
-    dt = days_per_frame / 365
-    steps = int(num_years // dt)
+    num_of_coordinates = 128
+    total_time = 10.0  # years
     dx = grid_dim / num_of_coordinates
 
     return SimulationConfig(
@@ -51,7 +48,6 @@ def get_config(seed: int = 0):
                 "init_fn": initial_pop,
                 "is_dynamic": True,
                 "bc_type": "neumann",
-                "vmin": 0.0,
             },
             FOOD: {
                 "shape": (num_of_coordinates, num_of_coordinates),
@@ -59,7 +55,6 @@ def get_config(seed: int = 0):
                 "init_fn": initial_food,
                 "is_dynamic": True,
                 "bc_type": "neumann",
-                "vmin": 0.0
             },
         },
         lagrangian_terms=[
@@ -73,6 +68,5 @@ def get_config(seed: int = 0):
             ### POPULATION ###
             LogisticGrowthSource(target=POPULATION, upper_limit=FOOD, gamma=0.1),
         ],
-        dt=dt,
-        steps=steps
+        total_time=total_time,
     )

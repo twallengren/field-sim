@@ -11,6 +11,7 @@ from fieldsim.field import Field
 from fieldsim.lagrangian import Lagrangian
 from fieldsim.simulations.agriculture import get_config
 from fieldsim.simulator import Simulator
+from fieldsim.stability import stable_dt
 
 N_STEPS = 5
 
@@ -25,12 +26,22 @@ def _build_simulator(config):
     for term in config.lagrangian_terms:
         lagrangian.add_term(term)
 
+    dx = next(iter(fields.values())).dx
+    dt = stable_dt(
+        fields,
+        config.lagrangian_terms,
+        config.flux_terms,
+        config.sources,
+        dx,
+        safety=config.safety,
+    )
+
     simulator = Simulator(
         fields=fields,
         lagrangian=lagrangian,
         sources=config.sources,
         flux_terms=config.flux_terms,
-        dt=config.dt,
+        dt=dt,
     )
     return simulator
 

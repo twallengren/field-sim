@@ -6,9 +6,12 @@ from fieldsim.field import Field
 from fieldsim.lagrangian import Lagrangian
 from fieldsim.simulation_config import SimulationConfig
 from fieldsim.simulator import Simulator
+from fieldsim.stability import n_steps, stable_dt
 
 
 class SimulationRunner:
+    """Builds the fields/operators from a config, derives dt, and integrates."""
+
     def __init__(self, config: SimulationConfig):
         self.config = config
         self.fields = {
@@ -20,17 +23,35 @@ class SimulationRunner:
         for term in config.lagrangian_terms:
             self.lagrangian.add_term(term)
 
+        dx_values = {float(f.dx) for f in self.fields.values()}
+        if len(dx_values) != 1:
+            raise ValueError(
+                f"All fields must share one grid spacing dx; got {sorted(dx_values)}."
+            )
+        self.dx = dx_values.pop()
+
+        # The timestep comes from the physics, evaluated on the initial state.
+        self.dt = stable_dt(
+            self.fields,
+            config.lagrangian_terms,
+            config.flux_terms,
+            config.sources,
+            self.dx,
+            safety=config.safety,
+        )
+        self.steps = n_steps(config.total_time, self.dt)
+
         self.simulator = Simulator(
             fields=self.fields,
             lagrangian=self.lagrangian,
             sources=config.sources,
             flux_terms=config.flux_terms,
-            dt=config.dt
+            dt=self.dt,
         )
         self.history = []
 
     def run(self):
-        for _ in range(self.config.steps):
+        for _ in range(self.steps):
             self.simulator.step()
             self.history.append(self.simulator.get_state())
 
