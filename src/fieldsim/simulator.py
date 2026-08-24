@@ -25,24 +25,27 @@ class Simulator:
         - flux divergence from continuity equation
         """
         new_values = {}
+        values = {name: field.get_values() for name, field in self.fields.items()}
 
         for name, field in self.fields.items():
             if not field.is_dynamic:
                 continue
 
+            dx = field.dx
+
             # Lagrangian term: gradient flow
-            dF_df = self.lagrangian.functional_derivative(self.fields, name)
+            dF_df = self.lagrangian.functional_derivative(values, dx, name)
 
             # Source/sink terms
             source_sum = sum(
-                s.evaluate(self.fields) for s in self.sources if s.target == name
+                s.evaluate(values) for s in self.sources if s.target == name
             )
 
             # Flux divergence terms (∇ · J)
             flux_sum = sum(
-                flux.divergence(self.fields, field.dx)
+                flux.divergence(values, dx)
                 for flux in self.flux_terms
-                if flux.target_field_name == name
+                if flux.target == name
             )
 
             # Time step update
