@@ -1,0 +1,27 @@
+import argparse
+
+from fieldsim.simulations.agriculture import get_config
+from fieldsim.simulation_runner import SimulationRunner
+from fieldsim.utils.constants import POPULATION, FOOD, FERTILITY, INDUSTRY
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="fieldsim",
+        description="Run a field-sim PDE simulation (agriculture population/food model).",
+    )
+    parser.parse_args()
+
+    cfg = get_config()
+    runner = SimulationRunner(cfg)
+    runner.run()
+    runner.animate(
+        field_names=[POPULATION, FOOD],
+        absolute=True,
+        split=True,
+        split_rows=1,
+        split_cols=2)
+
+
+if __name__ == "__main__":
+    main()

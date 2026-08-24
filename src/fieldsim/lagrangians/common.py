@@ -1,4 +1,4 @@
-from lagrangian_term import LagrangianTerm
+from fieldsim.lagrangian_term import LagrangianTerm
 
 
 class Diffusion(LagrangianTerm):

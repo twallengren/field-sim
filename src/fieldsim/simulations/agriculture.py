@@ -1,12 +1,12 @@
 from jax import numpy as jnp
 
-from flux_terms.common import AdvectionAlongGradientFlux
-from lagrangians.common import Diffusion
-from simulation_config import SimulationConfig
-from sources.common import LogisticGrowthSource, ResourceConsumptionSource, MultiplicativeGrowthSource, \
+from fieldsim.flux_terms.common import AdvectionAlongGradientFlux
+from fieldsim.lagrangians.common import Diffusion
+from fieldsim.simulation_config import SimulationConfig
+from fieldsim.sources.common import LogisticGrowthSource, ResourceConsumptionSource, MultiplicativeGrowthSource, \
     BoostedLogisticGrowthSource
-from utils.constants import POPULATION, FERTILITY, INDUSTRY, FOOD
-from utils.generators import generate_random_bump_specs, build_bump_function
+from fieldsim.utils.constants import POPULATION, FERTILITY, INDUSTRY, FOOD
+from fieldsim.utils.generators import generate_random_bump_specs, build_bump_function
 
 grid_dim = 10 # each edge is grid_dim km long
 

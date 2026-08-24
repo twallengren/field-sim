@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 
-from source_term import SourceTerm
+from fieldsim.source_term import SourceTerm
 
 
 class ExponentialGrowthSource(SourceTerm):

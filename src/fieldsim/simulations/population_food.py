@@ -1,15 +1,15 @@
 from jax import numpy as jnp
-from simulation_config import SimulationConfig
-from lagrangians.population_food_terms import (
+from fieldsim.simulation_config import SimulationConfig
+from fieldsim.lagrangians.population_food_terms import (
     PopulationDiffusion,
     FoodDiffusion, FoodTransportToInfraTerm,
 )
-from sources.population_food_sources import (
+from fieldsim.sources.population_food_sources import (
     PopulationGrowthSource,
     FoodConsumptionSource, FoodDecaySource, ConstantFoodSource, PopulationDecaySource, FoodLimitedPopulationDecaySource,
     ResourceConsumptionSource, PopulationResourceGrowth, InfrastructureBuildSource
 )
-from utils.generators import generate_random_bump_specs, build_bump_function
+from fieldsim.utils.generators import generate_random_bump_specs, build_bump_function
 
 grid_dim = 10 # each edge is grid_dim km long
 

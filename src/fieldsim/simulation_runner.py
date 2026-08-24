@@ -2,10 +2,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
-from field import Field
-from lagrangian import Lagrangian
-from simulation_config import SimulationConfig
-from simulator import Simulator
+from fieldsim.field import Field
+from fieldsim.lagrangian import Lagrangian
+from fieldsim.simulation_config import SimulationConfig
+from fieldsim.simulator import Simulator
 
 
 class SimulationRunner:

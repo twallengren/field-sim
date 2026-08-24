@@ -1,4 +1,4 @@
-from flux_term import FluxTerm
+from fieldsim.flux_term import FluxTerm
 
 
 class AdvectionAlongGradientFlux(FluxTerm):
