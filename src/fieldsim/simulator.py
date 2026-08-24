@@ -63,10 +63,6 @@ class Simulator:
 
         self.time += self.dt
 
-    def run(self, n_steps: int):
-        for _ in range(n_steps):
-            self.step()
-
     def get_state(self):
         return {name: field.get_values() for name, field in self.fields.items()}
 

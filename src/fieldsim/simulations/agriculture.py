@@ -1,60 +1,46 @@
-from jax import numpy as jnp
+import numpy as np
 
 from fieldsim.flux_terms.common import AdvectionAlongGradientFlux
 from fieldsim.lagrangians.common import Diffusion
 from fieldsim.simulation_config import SimulationConfig
-from fieldsim.sources.common import LogisticGrowthSource, ResourceConsumptionSource, MultiplicativeGrowthSource, \
-    BoostedLogisticGrowthSource
-from fieldsim.utils.constants import POPULATION, FERTILITY, INDUSTRY, FOOD
+from fieldsim.sources.common import LogisticGrowthSource
+from fieldsim.utils.constants import POPULATION, FOOD
 from fieldsim.utils.generators import generate_random_bump_specs, build_bump_function
 
-grid_dim = 10 # each edge is grid_dim km long
 
-pop_specs = generate_random_bump_specs(
-    n_bumps=10,
-    bounds=((0, 10), (0, 10)),
-    amp_range=(1, 10),
-    sigma_range=(0.2, 0.8),
-    mode="cartesian"
-)
-pop_bump_fn = build_bump_function(pop_specs)
-def initial_pop(x, y):
-    return pop_bump_fn(x, y, t=0)
+def get_config(seed: int = 0):
+    grid_dim = 10  # each edge is grid_dim km long
 
-def initial_industry(x, y):
-    return jnp.zeros_like(x, dtype=jnp.float32)
+    rng = np.random.default_rng(seed)
 
-# Create bumps in a 10x10 space
-fert_specs = generate_random_bump_specs(
-    n_bumps=10,
-    bounds=((0, 10), (0, 10)),
-    amp_range=(10, 20),
-    sigma_range=(0.4, 1.2),
-    mode="cartesian"
-)
-fert_bump_fn = build_bump_function(fert_specs)
-def initial_fertility(x, y):
-    return fert_bump_fn(x, y, t=0)
+    pop_specs = generate_random_bump_specs(
+        rng,
+        n_bumps=10,
+        bounds=((0, 10), (0, 10)),
+        amp_range=(1, 10),
+        sigma_range=(0.2, 0.8),
+    )
+    pop_bump_fn = build_bump_function(pop_specs)
+    def initial_pop(x, y):
+        return pop_bump_fn(x, y)
 
-food_specs = generate_random_bump_specs(
-    n_bumps=10,
-    bounds=((0, 10), (0, 10)),
-    amp_range=(20, 80),
-    sigma_range=(0.4, 1.2),
-    mode="cartesian"
-)
-food_bump_fn = build_bump_function(food_specs)
-def initial_food(x, y):
-    return food_bump_fn(x, y, t=0)
-
-def get_config():
+    food_specs = generate_random_bump_specs(
+        rng,
+        n_bumps=10,
+        bounds=((0, 10), (0, 10)),
+        amp_range=(20, 80),
+        sigma_range=(0.4, 1.2),
+    )
+    food_bump_fn = build_bump_function(food_specs)
+    def initial_food(x, y):
+        return food_bump_fn(x, y)
 
     num_of_coordinates = 250
     num_years = 10
     days_per_frame = 5
     dt = days_per_frame / 365
     steps = int(num_years // dt)
-    dx = grid_dim/num_of_coordinates
+    dx = grid_dim / num_of_coordinates
 
     return SimulationConfig(
         name="Population–Food Interaction",

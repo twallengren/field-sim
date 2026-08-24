@@ -5,6 +5,7 @@ class SimulationConfig:
             name: str — name of the simulation
             field_defs: dict of field_name → dict {shape, dx, init_fn, is_dynamic}
             lagrangian_terms: list of LagrangianTerm instances
+            flux_terms: list of FluxTerm instances
             sources: list of SourceTerm instances
             dt: float — timestep size
             steps: int — number of simulation steps

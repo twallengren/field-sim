@@ -49,16 +49,9 @@ class Field:
         df_dy, df_dx = jnp.gradient(self.values, self.dx)
         return df_dx, df_dy
 
-    def laplacian(self):
-        df2_dx = jnp.gradient(jnp.gradient(self.values, self.dx, axis=1), self.dx, axis=1)
-        df2_dy = jnp.gradient(jnp.gradient(self.values, self.dx, axis=0), self.dx, axis=0)
-        return df2_dx + df2_dy
-
     def apply_bc(self):
         if self.bc_type == "neumann":
             self.apply_neumann_bc()
-        elif self.bc_type == "leaky_neumann":
-            self.apply_leaky_neumann_bc()
         else:
             raise ValueError(f"Unsupported boundary condition type: {self.bc_type}")
         self._clip()
@@ -69,13 +62,4 @@ class Field:
         f = f.at[-1, :].set(f[-2, :])
         f = f.at[:, 0].set(f[:, 1])
         f = f.at[:, -1].set(f[:, -2])
-        self.values = f
-
-    def apply_leaky_neumann_bc(self, eta=0.1):
-        f = self.values
-        dx = self.dx
-        f = f.at[:, 0].set(f[:, 1] - eta * dx)
-        f = f.at[:, -1].set(f[:, -2] - eta * dx)
-        f = f.at[0, :].set(f[1, :] - eta * dx)
-        f = f.at[-1, :].set(f[-2, :] - eta * dx)
         self.values = f

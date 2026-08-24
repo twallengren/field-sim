@@ -4,9 +4,8 @@ Verifies that the core fieldsim modules import cleanly under the new
 src-layout package. This is intentionally shallow (no behavior assertions
 about numerics) — deeper tests land in later phases.
 
-Note: fieldsim.simulations.population_food is import-broken (references
-modules deleted upstream) and is intentionally excluded here; it is slated
-for deletion in Phase 1.
+Note: the legacy, import-broken population/food simulation config module
+and its dead source-term classes were deleted in Phase 1.
 """
 
 import importlib

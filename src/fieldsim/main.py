@@ -2,7 +2,7 @@ import argparse
 
 from fieldsim.simulations.agriculture import get_config
 from fieldsim.simulation_runner import SimulationRunner
-from fieldsim.utils.constants import POPULATION, FOOD, FERTILITY, INDUSTRY
+from fieldsim.utils.constants import POPULATION, FOOD
 
 
 def main():
@@ -10,9 +10,10 @@ def main():
         prog="fieldsim",
         description="Run a field-sim PDE simulation (agriculture population/food model).",
     )
-    parser.parse_args()
+    parser.add_argument("--seed", type=int, default=0, help="RNG seed for initial-condition generation.")
+    args = parser.parse_args()
 
-    cfg = get_config()
+    cfg = get_config(seed=args.seed)
     runner = SimulationRunner(cfg)
     runner.run()
     runner.animate(
