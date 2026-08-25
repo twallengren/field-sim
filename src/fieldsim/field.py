@@ -1,4 +1,25 @@
+import jax
 import jax.numpy as jnp
+
+
+def canonicalize(values):
+    """Return ``values`` as a device array with a concrete (non-weak) dtype.
+
+    JAX marks arrays that were built from Python scalars -- e.g. the cell-centre
+    grid ``(arange(n) + 0.5) * dx``, and hence any initial condition derived
+    from it -- as *weakly typed*.  A weakly typed argument is a **different jit
+    signature** from the strongly typed array the same expression produces once
+    it has been through one arithmetic step, so leaving the weak flag in place
+    costs the simulator's compiled step an extra retrace on its second call.
+    Canonicalising every value a :class:`Field` stores keeps that cache to a
+    single entry.  Nothing about the numbers changes: the dtype is unchanged,
+    only the "this could be promoted" annotation is dropped.
+    """
+    array = jnp.asarray(values)
+    if getattr(array, "weak_type", False):
+        array = jax.lax.convert_element_type(array, array.dtype)
+    return array
+
 
 #: Boundary conditions the operator layer implements.  Zero-flux (homogeneous
 #: Neumann) is baked into the discrete operators themselves -- the diffusion
@@ -59,10 +80,10 @@ class Field:
         x = (jnp.arange(nx) + 0.5) * self.dx
         y = (jnp.arange(ny) + 0.5) * self.dx
         X, Y = jnp.meshgrid(x, y, indexing="xy")
-        return fn(X, Y)
+        return canonicalize(fn(X, Y))
 
     def get_values(self):
         return self.values
 
     def set_values(self, new_values):
-        self.values = new_values
+        self.values = canonicalize(new_values)

@@ -301,7 +301,12 @@ def test_stable_dt_requires_some_dynamics():
 
 
 def test_floor_diagnostics_record_injected_negative_mass():
-    """The floor is *monitored*: a genuine negative excursion is reported."""
+    """The floor is *monitored*: a genuine negative excursion is reported.
+
+    Since the step function is jit-compiled and its floor measurement stays on
+    device, the guard is evaluated per step but *reported* when the pending
+    window is synchronised -- here, explicitly.
+    """
     ics = _smooth_ics()
     simulator, dx = _build(32, ics)
 
@@ -309,5 +314,6 @@ def test_floor_diagnostics_record_injected_negative_mass():
     injected = -1.0
     simulator.fields[POPULATION].set_values(values.at[5, 5].set(injected))
 
+    simulator.step()
     with pytest.raises(RuntimeError, match="Positivity floor truncated"):
-        simulator.step()
+        simulator.sync_diagnostics()
