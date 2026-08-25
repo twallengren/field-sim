@@ -228,7 +228,10 @@ contains a non-finite value; by default (`check_every=25`) this runs every 25
 steps, and it also runs once at the end of `Simulator.__init__`, so a
 hand-picked oversized `dt` is rejected before a single step is taken (rather
 than after up to `check_every − 1` bad ones, or never when `check_every` is
-disabled).
+disabled). Because that construction-time check is unconditional, every
+`LagrangianTerm`/`FluxTerm`/`SourceTerm` passed to a `Simulator` must declare
+a real `max_rate` -- a term without one now fails at construction rather than
+only when a periodic check happens to run.
 
 *Monitored positivity floor.* Positivity is a property of the discretisation
 by construction (convex-combination diffusion under the CFL bound, donor-cell
@@ -295,10 +298,10 @@ anywhere in the process.
 Approximate runtimes measured on this machine (CPU, single process):
 
 * `fieldsim-run --sim agriculture --seed 0 --no-anim` (default `n=128`,
-  875 steps, `dt≈0.0114`): **≈2.5 s CPU** (2.22 s user + 0.27 s system;
-  ≈2.2 s wall).
+  875 steps, `dt≈0.0114`): **≈3.1 s CPU** (2.8 s user + 0.3 s system;
+  ≈2.7 s wall).
 * `fieldsim-run --sim chemotaxis_demo --seed 0 --save out.gif` (default
-  `n=96`): most of the ≈16 s wall time is GIF encoding (`PillowWriter`), not
+  `n=96`): most of the ≈14 s wall time is GIF encoding (`PillowWriter`), not
   the simulation itself.
 * `pytest` (49 tests): ≈42 s.
 

@@ -37,7 +37,11 @@ class Simulator:
     :meth:`check_state`) as well as every ``check_every`` steps, so an oversized
     hand-picked ``dt`` raises before a single bad step is taken rather than
     after up to ``check_every - 1`` of them -- or never, when ``check_every`` is
-    disabled.
+    disabled.  Because that check runs at construction, every
+    ``LagrangianTerm``/``FluxTerm``/``SourceTerm`` passed in must implement a
+    real ``max_rate`` (a term that raises ``NotImplementedError`` there can no
+    longer be used with ``check_every=None`` to dodge the requirement -- the
+    constructor call to :meth:`check_state` triggers it regardless).
 
     Performance / host-device split
     -------------------------------

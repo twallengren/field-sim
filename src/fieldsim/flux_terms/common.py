@@ -47,9 +47,9 @@ class AdvectionAlongGradientFlux(FluxTerm):
       maximum.  The looser-looking ``(max|u| + max|v|)/dx`` is *not* an upper
       bound for it: where ``F`` has an interior local minimum both faces of an
       axis drain the same cell, and the one-sided form under-counts by up to a
-      factor of 2 per axis (4 in 2D), permitting a dt that drives that cell
-      negative in a single step.  Conversely, on smooth fields where each cell
-      has one outflowing face per axis the per-cell maximum is usually *smaller*
+      factor of 2, permitting a dt that drives that cell negative in a single
+      step.  Conversely, on smooth fields where each cell has one outflowing
+      face per axis the per-cell maximum is usually *smaller*
       than ``(max|u| + max|v|)/dx`` (the two maxima need not occur in the same
       cell), so the tight rate also buys a larger timestep.
 

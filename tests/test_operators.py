@@ -220,7 +220,7 @@ def test_upwind_positivity_divergent_flow(two_dimensional):
 
         dt * (u_R^+ + u_L^- + v_U^+ + v_D^-) / dx,
 
-    up to 2x (4x in 2D) the one-sided ``(max|u| + max|v|)/dx`` surrogate.  A
+    up to 2x the one-sided ``(max|u| + max|v|)/dx`` surrogate.  A
     ``max_rate`` that reports the surrogate hands back a dt that drives the
     valley cell negative on the very first step.
 
