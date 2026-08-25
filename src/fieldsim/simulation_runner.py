@@ -117,6 +117,7 @@ class SimulationRunner:
             split_rows=None,
             split_cols=None,
             save_path=None,
+            fps=None,
     ):
         """Build (and optionally save) a matplotlib animation of the history.
 
@@ -124,6 +125,17 @@ class SimulationRunner:
         this call so that callers who want a headless (Agg) backend can set
         ``matplotlib.use("Agg")`` *before* the first ``import pyplot`` anywhere
         in the process.
+
+        ``interval`` is the interactive playback speed in milliseconds/frame
+        (``FuncAnimation``'s own knob) and is used as-is for on-screen
+        display; it is unrelated to real wall-clock recording time, since
+        frames are subsampled by ``max_frames``/``stride``, not by time.
+        For *saved* animations (``save_path`` set), ``interval`` alone is a
+        poor fps source -- the default ``interval=1`` would translate to a
+        literal 1000 fps GIF/MP4, which most players either choke on or
+        silently clamp. ``fps`` controls the saved file's frame rate
+        directly: pass an explicit value, or leave it ``None`` to derive a
+        sane one from ``interval`` capped at 30 (see ``_save_animation``).
         """
         import matplotlib.pyplot as plt
         import matplotlib.animation as animation
@@ -224,16 +236,24 @@ class SimulationRunner:
         plt.tight_layout()
 
         if save_path is not None:
-            self._save_animation(save_path, animation, plt, fig, interval)
+            self._save_animation(save_path, animation, plt, fig, interval, fps)
             plt.close(fig)
             return self._ani
 
         plt.show()
         return self._ani
 
-    def _save_animation(self, save_path, animation, plt, fig, interval):
+    def _save_animation(self, save_path, animation, plt, fig, interval, fps=None):
         save_path = str(save_path)
-        fps = max(1, round(1000.0 / max(interval, 1)))
+        if fps is None:
+            # Derive a sane saved-file frame rate from the interactive
+            # ``interval`` (ms/frame), but cap it: with the default
+            # ``interval=1`` a literal ``1000/interval`` fps is quantized
+            # nonsense for a saved GIF/MP4 (most players don't support it
+            # and it bloats file size for no visual benefit). 30 fps is a
+            # conventional ceiling; callers who want something else should
+            # pass ``fps=`` explicitly.
+            fps = min(30, max(1, round(1000.0 / max(interval, 1))))
         is_mp4 = save_path.lower().endswith(".mp4")
 
         if is_mp4:

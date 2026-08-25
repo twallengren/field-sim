@@ -34,7 +34,11 @@ class Diffusion(LagrangianTerm):
     ``[1, 0, -2, 0, 1]/(4 dx^2)`` stencil: that operator has a *zero* eigenvalue
     on the checkerboard mode (odd/even decoupling), so grid-scale noise was
     completely undamped.  The compact stencil has checkerboard eigenvalue
-    ``-8 alpha / dx^2``, the most strongly damped mode in the spectrum.
+    bounded by ``-8 alpha / dx^2`` (approached, not attained, on a finite
+    grid: on the cell-centred Neumann grid the highest mode is ``m = n-1``
+    with eigenvalue ``-alpha * (8/dx^2) * sin^2((n-1) pi / 2n)``, e.g.
+    ``-8172`` vs. the ``-8192`` bound for ``alpha=1, n=32, dx=1/32``), the
+    most strongly damped mode in the spectrum.
 
     Boundary conditions.  Omitting the boundary faces from the sum *is* the
     variational statement of the zero-flux (homogeneous Neumann) condition: a

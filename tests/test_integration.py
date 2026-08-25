@@ -115,6 +115,43 @@ def test_zero_stays_zero():
         assert diag["last_truncated_mass"] == 0.0, name
 
 
+def test_zero_population_stays_zero_while_food_regrows():
+    """P == 0 is an exact fixed point even with fertility driving food regrowth.
+
+    Every term touching POPULATION (diffusion, the gradient-following flux,
+    logistic growth) is homogeneous in P, so an all-zero population field is
+    an exact fixed point regardless of what FOOD/FERTILITY do. With a
+    positive constant fertility (K = 1.0) and F starting at zero, the
+    RelaxationSource term still pulls FOOD up toward that capacity every
+    step -- exercising the full agriculture term set (including
+    ConsumptionSource, which is identically zero here since P == 0) while
+    confirming P itself never moves off zero, not even by floating-point
+    dust.
+    """
+    zero = lambda X, Y: jnp.zeros_like(X)
+    one = lambda X, Y: jnp.ones_like(X)
+    simulator, dx = _build(
+        32,
+        {POPULATION: zero, FOOD: zero, FERTILITY: one},
+    )
+
+    state0 = simulator.get_state()
+    f0_total = float(jnp.sum(np.asarray(state0[FOOD])))
+    assert f0_total == 0.0
+
+    for _ in range(100):
+        simulator.step()
+        p = np.asarray(simulator.get_state()[POPULATION])
+        assert np.array_equal(p, np.zeros_like(p)), "population moved off exact zero"
+
+    state = simulator.get_state()
+    p_final = np.asarray(state[POPULATION])
+    f_final = np.asarray(state[FOOD])
+
+    assert np.array_equal(p_final, np.zeros_like(p_final))
+    assert float(np.sum(f_final)) > f0_total, "food should have regrown toward fertility"
+
+
 def test_nonnegativity_full_dynamics():
     """Full agriculture dynamics stay non-negative with negligible floor action."""
     n = 48

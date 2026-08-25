@@ -5,6 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fieldsim"
 version = "0.1.0"
+description = "A small JAX-based 2D reaction-advection-diffusion field simulator built from a variational (Lagrangian gradient-flow) formulation."
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Toren Wallengren", email = "toren.wallengren@gmail.com" },
+]
 requires-python = ">=3.10"
 dependencies = [
     "jax",
@@ -13,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pyflakes"]
 
 [project.scripts]
 fieldsim-run = "fieldsim.main:main"

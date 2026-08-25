@@ -55,7 +55,11 @@ def _print_summary(runner):
     print(f"dt: {runner.dt:.6g}")
     print(f"frames recorded: {len(runner.history)} (stride={runner.stride})")
 
-    final = runner.history[-1]
+    # Read the final state straight from the simulator's own device arrays
+    # (full precision) rather than from ``runner.history``, whose frames are
+    # downcast to float32 for animation/plotting and would silently distort
+    # a mass summary that is meant to be a precise diagnostic.
+    final = runner.simulator.get_state()
     print("final total mass per field:")
     for name, values in final.items():
         mass = float(values.sum()) * runner.dx ** 2

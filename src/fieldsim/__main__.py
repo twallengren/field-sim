@@ -1,3 +1,5 @@
+import sys
+
 from fieldsim.main import main
 
-main()
+sys.exit(main())

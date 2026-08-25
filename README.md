@@ -139,8 +139,10 @@ this reproduces
 
 i.e. autodiff of the face-difference energy yields exactly the compact
 5-point Laplacian `(φ_E + φ_W + φ_N + φ_S − 4φ_C)/dx²`. Its checkerboard
-eigenvalue is `−8α/dx²` — the most strongly damped mode in the spectrum, so
-grid-scale noise is damped rather than left undamped (a wide
+eigenvalue is bounded by `−8α/dx²` (approached, not attained, on a finite
+grid — the highest mode on the cell-centred Neumann grid is `m = n−1`, with
+eigenvalue `−(8α/dx²)·sin²((n−1)π/2n)`) — the most strongly damped mode in
+the spectrum, so grid-scale noise is damped rather than left undamped (a wide
 central-difference stencil built from `jnp.gradient` has a *zero* eigenvalue
 on the checkerboard mode — odd/even decoupling — and is not used here).
 
@@ -298,7 +300,7 @@ Approximate runtimes measured on this machine (CPU, single process):
 * `fieldsim-run --sim chemotaxis_demo --seed 0 --save out.gif` (default
   `n=96`): most of the ≈16 s wall time is GIF encoding (`PillowWriter`), not
   the simulation itself.
-* `pytest` (48 tests): ≈38 s.
+* `pytest` (49 tests): ≈42 s.
 
 ## Testing
 
@@ -311,8 +313,9 @@ the suite. Per test file:
   `Field`, no floor): diffusion conserves mass to `1e-12` and stays
   non-negative; a discrete Neumann eigenmode decays at exactly the predicted
   rate `(1 − dt·α·λ_h)^N`; population climbs a static food gradient while its
-  total is conserved to `1e-12`; a sharp density step advected downgradient
-  never goes negative (donor-cell positivity, zero floor activation), and
+  total is conserved to `1e-12`; a sharp density step advected hard up the
+  food gradient never goes negative (donor-cell positivity, zero floor
+  activation), and
   neither does a density sitting in a V-shaped (or pyramidal) attractant
   valley, where the cell drains through both/all four faces at once and the
   declared `max_rate` must be the two-sided one; any
@@ -320,8 +323,10 @@ the suite. Per test file:
   stays finite and non-negative even where the capacity field is zero.
 * `tests/test_integration.py` — `Field`/`Simulator` integration: all-zero
   initial conditions are an exact fixed point of the full agriculture system;
-  full dynamics from random bumps stay non-negative with negligible
-  cumulative floor truncation; field/simulator construction validates shape,
+  zero population stays exactly zero even while a positive fertility field
+  regrows food underneath it; full dynamics from random bumps stay
+  non-negative with negligible cumulative floor truncation; field/simulator
+  construction validates shape,
   `dx`, `bc_type`, and positive `dt`; an oversized `dt` is rejected at
   construction, and a `dt` made unsafe afterwards still trips the runtime
   guard, as do injected non-finite values; the derived `dt` matches
@@ -346,8 +351,10 @@ the suite. Per test file:
   computation over the full history), the single-frame and many-field
   animation edge cases, and end-to-end headless CLI subprocess runs
   (`--no-anim` and `--save`).
-* `tests/test_import_safety.py` — importing every `fieldsim` submodule
-  consumes no global `numpy` RNG state and opens no matplotlib figures.
+* `tests/test_import_safety.py` — in a fresh subprocess interpreter (so the
+  check can't be short-circuited by other test modules having already
+  imported `fieldsim`), importing every `fieldsim` submodule consumes no
+  global `numpy` RNG state and never even imports `matplotlib.pyplot`.
 * `tests/test_smoke.py` — the core modules import cleanly under the
   src-layout package.
 
@@ -395,6 +402,7 @@ LICENSE
   approximation), which produced a wide `[1, 0, −2, 0, 1]/(4dx²)` stencil
   with a *zero* eigenvalue on the checkerboard mode — grid-scale noise was
   completely undamped. The face-difference energy described above fixes
-  this (checkerboard eigenvalue `−8α/dx²`, the most strongly damped mode);
+  this (checkerboard eigenvalue bounded by `−8α/dx²`, the most strongly
+  damped mode);
   it is noted here only because the failure mode is a common pitfall for
   this style of variational discretisation.

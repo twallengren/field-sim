@@ -168,7 +168,7 @@ def test_chemotaxis_sign_and_conservation(x64):
 
 
 def test_upwind_positivity_no_floor():
-    """A sharp density step advected hard downgradient never goes negative.
+    """A sharp density step advected hard up the food gradient never goes negative.
 
     Runs in the default float32 precision on purpose: the donor-cell positivity
     guarantee is structural, not a precision artefact.
