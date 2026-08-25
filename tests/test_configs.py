@@ -140,7 +140,10 @@ def test_agriculture_runs_end_to_end():
     assert runner.steps >= 1
     assert runner.dt > 0
     runner.run()
-    assert len(runner.history) == runner.steps
+    # History is bounded (Phase 3): step 0 plus a stride of later steps, so it
+    # is no longer one entry per step, but it must never exceed max_frames+1
+    # and must include at least the initial and final snapshots.
+    assert 2 <= len(runner.history) <= runner.max_frames + 1
 
     state = runner.simulator.get_state()
     for name in (POPULATION, FOOD, FERTILITY):
