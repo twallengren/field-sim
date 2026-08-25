@@ -1,3 +1,5 @@
+import math
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -30,6 +32,12 @@ class Simulator:
     than ``truncation_tolerance`` times that field's mass the run stops with a
     ``RuntimeError``: round-off is recorded, a real bug is caught, and nothing
     is hidden.
+
+    The stability bound is checked **at construction** (``__init__`` ends with
+    :meth:`check_state`) as well as every ``check_every`` steps, so an oversized
+    hand-picked ``dt`` raises before a single bad step is taken rather than
+    after up to ``check_every - 1`` of them -- or never, when ``check_every`` is
+    disabled.
 
     Performance / host-device split
     -------------------------------
@@ -123,6 +131,17 @@ class Simulator:
         # every step; nothing here is rebuilt inside the loop.
         self._jitted_step = jax.jit(self._step_values)
         self._compiled_for = (self.dt, self.dx)
+
+        # Validate the timestep against the *initial* state before anyone can
+        # step.  Without this, a hand-constructed Simulator with an oversized
+        # dt takes up to ``check_every - 1`` garbage steps before the periodic
+        # guard fires -- and never fires at all when ``check_every`` is falsy.
+        # ``stable_dt`` callers pass a dt that satisfies this by construction,
+        # so only a hand-picked dt can trip it.  (A caller that deliberately
+        # wants an unstable run can still assign to ``simulator.dt`` after
+        # construction; ``step`` recompiles and the periodic guard then catches
+        # it, which is how the runtime guard is exercised in the tests.)
+        self.check_state()
 
     # ------------------------------------------------------------------
     # Diagnostics (host side, lazily synchronised)
@@ -256,7 +275,14 @@ class Simulator:
             diag["last_truncated_mass"] = float(negs[-1]) + 0.0
 
             budgets = self.truncation_tolerance * masses + _ABS_MASS_FLOOR
-            offending = np.flatnonzero(negs > budgets)
+            # A NaN state makes both measurements NaN, and *every* comparison
+            # with a NaN is False -- so a plain ``negs > budgets`` would let a
+            # blown-up run slip through the guard entirely (until the next
+            # ``check_state``, which ``check_every=None`` disables).  Treat a
+            # non-finite measurement as a violation in its own right.
+            offending = np.flatnonzero(
+                (negs > budgets) | ~np.isfinite(negs) | ~np.isfinite(masses)
+            )
             if offending.size and violation is None:
                 index = int(offending[0])
                 violation = (
@@ -269,6 +295,15 @@ class Simulator:
 
         if violation is not None:
             name, step, truncated, mass, budget = violation
+            if not (math.isfinite(truncated) and math.isfinite(mass)):
+                raise RuntimeError(
+                    f"Field {name!r} produced non-finite positivity diagnostics "
+                    f"at step {step} (t={step * self.dt:.6g}): truncated mass "
+                    f"{truncated!r}, post-floor mass {mass!r}. The state contains "
+                    "NaN or inf, so the run has already diverged; the violation "
+                    f"is reported at the end of its check window (steps "
+                    f"{first_step}-{last_step})."
+                )
             raise RuntimeError(
                 f"Positivity floor truncated {truncated:.6g} of mass from field "
                 f"{name!r} at step {step} (t={step * self.dt:.6g}), exceeding the "

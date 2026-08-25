@@ -202,6 +202,85 @@ def test_upwind_positivity_no_floor():
     assert x_centroid(pop, dx) > 0.25 * L
 
 
+@pytest.mark.parametrize("two_dimensional", [False, True], ids=["x-valley", "pyramid"])
+def test_upwind_positivity_divergent_flow(two_dimensional):
+    """Positivity holds where a cell drains through *both* faces of an axis.
+
+    ``test_upwind_positivity_no_floor`` uses a monotone attractant, so every
+    cell has exactly one outflowing face per axis and the loosest possible CFL
+    rate (``max|u|/dx``) already suffices.  That is structurally blind to the
+    worst case: an attractant with an interior local **minimum**.  Here
+
+        F = A |x - x_c|                     (and optionally + A |y - y_c|)
+
+    with the valley sitting exactly on a cell centre.  With ``kappa > 0`` the
+    density climbs the gradient, so the valley cell pushes mass out through its
+    left *and* right faces simultaneously (and, in the pyramid case, through all
+    four faces).  Its true fractional outflow per step is therefore
+
+        dt * (u_R^+ + u_L^- + v_U^+ + v_D^-) / dx,
+
+    up to 2x (4x in 2D) the one-sided ``(max|u| + max|v|)/dx`` surrogate.  A
+    ``max_rate`` that reports the surrogate hands back a dt that drives the
+    valley cell negative on the very first step.
+
+    Run at the library's default float32 and with no floor of any kind applied
+    (plain arrays, no ``Field``/``Simulator``), so ``min(P) >= 0`` here is a
+    statement about the discretisation and the declared rate, not about a clamp.
+    """
+    n = 32
+    L = 10.0
+    dx = L / n
+    chi = 1.0
+    amp = 2.0
+    steps = 200
+
+    X, Y = cell_center_grid(n, dx)
+    centres = cell_centers(n, dx)
+    # Valley on a cell centre (index n//2), so the minimum cell really does have
+    # an outflowing face on both sides; a valley on a face would give u = 0
+    # there and quietly reduce to the one-sided case.
+    x_c = centres[n // 2]
+    y_c = centres[n // 2]
+
+    food = amp * np.abs(X - x_c)
+    if two_dimensional:
+        food = food + amp * np.abs(Y - y_c)
+    food = jnp.asarray(food)
+
+    # All the mass in the minimum cell(s): the fastest-draining location.
+    pop = np.zeros((n, n))
+    if two_dimensional:
+        pop[n // 2, n // 2] = 1.0
+    else:
+        pop[:, n // 2] = 1.0
+    pop = jnp.asarray(pop)
+
+    flux = AdvectionAlongGradientFlux(target_field=POP, gradient_field=FOOD, kappa=chi)
+    values = {POP: pop, FOOD: food}
+    rate = flux.max_rate(values, dx)
+
+    # The declared rate must bound the true two-sided outflow of the worst cell.
+    faces = 4.0 if two_dimensional else 2.0
+    assert rate == pytest.approx(faces * chi * amp / dx, rel=1e-5)
+
+    dt = 0.8 / rate
+    m0 = float(jnp.sum(pop)) * dx ** 2
+
+    minimum = 0.0
+    for _ in range(steps):
+        pop = pop - dt * flux.divergence({POP: pop, FOOD: food}, dx)
+        minimum = min(minimum, float(jnp.min(pop)))
+
+    assert minimum >= 0.0, f"donor-cell scheme produced {minimum} < 0"
+    assert float(jnp.sum(pop)) * dx ** 2 == pytest.approx(m0, rel=1e-5)
+    # The flow is genuinely divergent: mass left the valley in both directions.
+    pop_np = np.asarray(pop, dtype=np.float64)
+    left = pop_np[:, : n // 2].sum()
+    right = pop_np[:, n // 2 + 1:].sum()
+    assert left > 0.1 * pop_np.sum() and right > 0.1 * pop_np.sum()
+
+
 def test_flux_divergence_sums_to_zero(x64):
     """Any FluxTerm conserves mass: the telescoping property, tested directly."""
     rng = np.random.default_rng(0)

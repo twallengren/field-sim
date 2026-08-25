@@ -245,24 +245,42 @@ def _smooth_ics():
     return {POPULATION: pop_fn, FOOD: food_fn, FERTILITY: fert_fn}
 
 
-def test_oversized_dt_trips_the_runtime_guard():
-    """A manually supplied dt far above the bound stops the run within 25 steps."""
+def test_oversized_dt_is_rejected_at_construction():
+    """A dt above the bound raises in ``__init__``, before any step is taken."""
     ics = _smooth_ics()
-    reference, dx = _build(32, ics)
+    reference, _ = _build(32, ics)
     oversized = 20.0 * reference.dt
 
-    simulator, _ = _build(32, ics, dt=oversized)
+    with pytest.raises(RuntimeError, match="violates the stability bound"):
+        _build(32, ics, dt=oversized)
+
+
+def test_oversized_dt_trips_the_runtime_guard():
+    """A dt that becomes unsafe *after* construction still stops the run.
+
+    Construction now validates the timestep, so the only way to reach the
+    periodic guard is a dt that was safe for the initial state and is not safe
+    later.  That is exactly what state-dependent (advective/consumption) rates
+    can do; here it is provoked deterministically by assigning to
+    ``simulator.dt`` after construction, which ``step`` honours by recompiling.
+    """
+    ics = _smooth_ics()
+    simulator, _ = _build(32, ics)
+    simulator.dt = 20.0 * simulator.dt
 
     with pytest.raises(RuntimeError):
         for _ in range(25):
             simulator.step()
+
+    assert simulator.step_count <= 25
 
 
 def test_stability_guard_reports_dt_violation_directly():
     """check_state() itself rejects a dt above the bound, with a clear message."""
     ics = _smooth_ics()
     reference, _ = _build(32, ics)
-    simulator, _ = _build(32, ics, dt=5.0 * reference.dt)
+    simulator, _ = _build(32, ics)
+    simulator.dt = 5.0 * simulator.dt
 
     with pytest.raises(RuntimeError, match="violates the stability bound"):
         simulator.check_state()

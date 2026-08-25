@@ -164,15 +164,44 @@ def test_diagnostics_flush_on_read_mid_window():
     assert simulator.diagnostics is diagnostics
 
 
+def test_oversized_dt_rejected_before_any_jitted_step():
+    """Construction validates dt, so no bad step is ever compiled or taken."""
+    with pytest.raises(RuntimeError, match="violates the stability bound"):
+        _build(dt_factor=20.0)
+
+
 def test_guards_still_fire_under_jit():
-    """An oversized dt stops the run within one check window."""
-    simulator, _ = _build(dt_factor=20.0)
+    """A dt made unsafe after construction stops the run within one window.
+
+    ``__init__`` now runs ``check_state``, so an oversized dt can no longer be
+    smuggled past the constructor; the periodic guard is reached by mutating
+    ``simulator.dt`` afterwards (``step`` recompiles for the new dt).
+    """
+    simulator, _ = _build()
+    simulator.dt *= 20.0
 
     with pytest.raises(RuntimeError):
         for _ in range(simulator.check_every):
             simulator.step()
 
     assert simulator.step_count <= simulator.check_every
+
+
+def test_nan_state_trips_the_truncation_guard_at_the_next_sync():
+    """A NaN in the state must not slip the mask (``nan > budget`` is False)."""
+    simulator, _ = _build()
+    simulator.step()
+
+    values = simulator.fields[POPULATION].get_values()
+    simulator.fields[POPULATION].set_values(values.at[3, 4].set(jnp.nan))
+    simulator.step()  # the offending step: both diagnostics come back NaN
+
+    with pytest.raises(RuntimeError, match="non-finite positivity diagnostics") as exc:
+        simulator.sync_diagnostics()
+
+    message = str(exc.value)
+    assert repr(POPULATION) in message
+    assert "at step 2" in message
 
 
 def test_truncation_guard_reports_its_window():

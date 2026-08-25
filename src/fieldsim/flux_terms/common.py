@@ -34,9 +34,24 @@ class AdvectionAlongGradientFlux(FluxTerm):
       contain none, producing spurious negative densities that were then hidden
       by the softplus clamp.  Here ``J = 0`` wherever the donor cell is empty.
     * **Positivity.**  A cell can only lose what it holds: the outgoing flux is
-      proportional to its own value, and under the advective CFL condition
-      ``dt * (|u| + |v|)/dx <= 1`` the total fractional outflow in one step is
-      at most 1, so a cell can never be drained below zero.
+      proportional to its own value.  A cell drains through *every* face whose
+      velocity points out of it, so its fractional loss in one step is
+      ``dt * (u_R^+ + u_L^- + v_U^+ + v_D^-)/dx``, where ``x^+ = max(x, 0)``,
+      ``x^- = max(-x, 0)`` and the four terms are its right/left/upper/lower
+      faces (boundary faces are zero).  The condition that no cell can be
+      drained below zero is therefore
+
+          ``dt * max_cell[(u_R^+ + u_L^- + v_U^+ + v_D^-)/dx] <= 1``
+
+      and :meth:`max_rate` returns exactly that per-cell two-sided outflow
+      maximum.  The looser-looking ``(max|u| + max|v|)/dx`` is *not* an upper
+      bound for it: where ``F`` has an interior local minimum both faces of an
+      axis drain the same cell, and the one-sided form under-counts by up to a
+      factor of 2 per axis (4 in 2D), permitting a dt that drives that cell
+      negative in a single step.  Conversely, on smooth fields where each cell
+      has one outflowing face per axis the per-cell maximum is usually *smaller*
+      than ``(max|u| + max|v|)/dx`` (the two maxima need not occur in the same
+      cell), so the tight rate also buys a larger timestep.
 
     Mass conservation is inherited from :meth:`FluxTerm.divergence` (telescoping
     face differences with zero boundary faces).
@@ -55,10 +70,27 @@ class AdvectionAlongGradientFlux(FluxTerm):
             return Jx, Jy
 
         def max_rate_fn(values, dx):
+            # Per-cell *two-sided* outflow coefficient.  A cell loses mass
+            # through every face whose velocity points out of it, so its
+            # fractional loss in one step is dt/dx times the sum of the
+            # outflowing parts of all four of its faces -- not the one-sided
+            # (max|u| + max|v|)/dx, which under-counts by up to 4x wherever the
+            # attractant has an interior local minimum (or maximum, for
+            # kappa < 0) and both faces of an axis drain the same cell.
+            # Zero-padding to the domain boundary encodes the zero-flux BC, so
+            # boundary faces contribute no outflow, exactly as in flux_fn.
             u, v = _face_velocities(values[gradient_field], kappa, dx)
-            umax = float(jnp.max(jnp.abs(u))) if u.size else 0.0
-            vmax = float(jnp.max(jnp.abs(v))) if v.size else 0.0
-            return (umax + vmax) / dx
+            up = jnp.pad(u, ((0, 0), (1, 1)))
+            vp = jnp.pad(v, ((1, 1), (0, 0)))
+            outflow = (
+                jnp.maximum(up[:, 1:], 0.0)      # through the right face
+                + jnp.maximum(-up[:, :-1], 0.0)  # through the left face
+                + jnp.maximum(vp[1:, :], 0.0)    # through the upper face
+                + jnp.maximum(-vp[:-1, :], 0.0)  # through the lower face
+            ) / dx
+            if not outflow.size:
+                return 0.0
+            return float(jnp.max(outflow))
 
         super().__init__(
             name=f"Advection({target_field} <- grad {gradient_field})",

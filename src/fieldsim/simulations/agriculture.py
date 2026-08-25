@@ -55,10 +55,15 @@ Numerics
     Explicit Euler with ``dt`` derived from the combined stability/positivity
     bound (see :mod:`fieldsim.stability`)
 
-        dt * ( 4 D_max/dx^2 + (max|u| + max|v|)/dx + s_max ) = 0.8
+        dt * ( 4 D_max/dx^2 + max_cell[(u_R^+ + u_L^- + v_U^+ + v_D^-)/dx]
+               + s_max ) = 0.8
+
+    where the advective term is the per-cell sum of the outflowing parts of all
+    four faces (the quantity that actually bounds a cell's fractional loss),
+    not the one-sided ``(max|u| + max|v|)/dx``.
 
     At the default resolution ``n = 128`` (``dx = 0.078125 km``) diffusion
-    dominates the bound and ``dt ~ 0.011 yr``, i.e. ~900 steps for a 10 year
+    dominates the bound and ``dt ~ 0.0114 yr``, i.e. ~875 steps for a 10 year
     run.  The parameters below were chosen so that this bound is comfortable:
     the original configuration used food amplitudes of O(80), which pushed the
     advective rate to ~3000/yr and made the hardcoded ``dt = 5/365`` roughly

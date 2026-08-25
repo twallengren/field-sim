@@ -178,9 +178,16 @@ precision for any well-formed flux, and it holds regardless of the sign or
 smoothness of `flux_fn`.
 
 *Positivity.* A cell can only lose what it holds (the outgoing face flux is
-proportional to the donor cell's own value), so under the advective CFL
-condition `dt·(|u| + |v|)/dx ≤ 1` the fractional outflow from any one cell in
-one step is at most 1, and a non-negative field cannot be driven negative.
+proportional to the donor cell's own value). A cell drains through *every*
+face whose velocity points out of it, so the CFL condition under which no cell
+can be driven negative is
+`dt·max_cell[(u_R⁺ + u_L⁻ + v_U⁺ + v_D⁻)/dx] ≤ 1`, where `x⁺ = max(x,0)`,
+`x⁻ = max(−x,0)`, the four terms are the cell's right/left/upper/lower faces
+and boundary faces contribute zero. `AdvectionAlongGradientFlux.max_rate`
+returns exactly this per-cell two-sided outflow maximum. The one-sided
+`(max|u| + max|v|)/dx` is *not* an upper bound for it: wherever the attractant
+has an interior local minimum, both faces of an axis drain the same cell and
+the one-sided form under-counts by up to 2× per axis.
 
 **Bounded logistic growth** (`fieldsim/sources/common.py`). The population
 growth source uses `γ P (F−P)/(F+P+ε)` rather than the textbook
@@ -199,7 +206,7 @@ bound on the rate (units 1/time) it imposes on the field it drives:
 | term | `max_rate` |
 |------|-----------|
 | `Diffusion(alpha)` | `4·alpha/dx²` |
-| `AdvectionAlongGradientFlux` | `(max\|u\| + max\|v\|)/dx` |
+| `AdvectionAlongGradientFlux` | `max_cell[(u_R⁺ + u_L⁻ + v_U⁺ + v_D⁻)/dx]` |
 | `LogisticGrowthSource` | `gamma` |
 | `RelaxationSource` | `rate` |
 | `ConsumptionSource` | `beta·max(consumer)` |
@@ -216,7 +223,10 @@ never truncates the requested duration short).
 evolves. `Simulator.check_state()` re-derives `rate_sum` from the *current*
 fields and raises `RuntimeError` if `dt·rate_sum > 1` or if any field
 contains a non-finite value; by default (`check_every=25`) this runs every 25
-steps.
+steps, and it also runs once at the end of `Simulator.__init__`, so a
+hand-picked oversized `dt` is rejected before a single step is taken (rather
+than after up to `check_every − 1` bad ones, or never when `check_every` is
+disabled).
 
 *Monitored positivity floor.* Positivity is a property of the discretisation
 by construction (convex-combination diffusion under the CFL bound, donor-cell
@@ -228,7 +238,9 @@ If a single step's `neg_mass` exceeds `truncation_tolerance × mass` (default
 `truncation_tolerance = 1e-8`, plus an absolute floor `1e-30` so a
 legitimately-zero field doesn't get a zero tolerance), the run raises
 `RuntimeError`: round-off is recorded, a real scheme failure is caught, and
-nothing is silently hidden.
+nothing is silently hidden. A non-finite measurement is itself treated as a
+violation (every comparison with `NaN` is `False`, so `neg_mass > budget`
+alone would let a blown-up state slip through the mask).
 
 **Reproducibility.** `get_config(seed=...)` is a pure function of its
 arguments: `np.random.default_rng(seed)` is constructed inside `get_config`
@@ -281,12 +293,12 @@ anywhere in the process.
 Approximate runtimes measured on this machine (CPU, single process):
 
 * `fieldsim-run --sim agriculture --seed 0 --no-anim` (default `n=128`,
-  899 steps, `dt≈0.0111`): **≈2.5 s CPU** (2.22 s user + 0.27 s system;
+  875 steps, `dt≈0.0114`): **≈2.5 s CPU** (2.22 s user + 0.27 s system;
   ≈2.2 s wall).
 * `fieldsim-run --sim chemotaxis_demo --seed 0 --save out.gif` (default
   `n=96`): most of the ≈16 s wall time is GIF encoding (`PillowWriter`), not
   the simulation itself.
-* `pytest` (43 tests): ≈35 s.
+* `pytest` (48 tests): ≈38 s.
 
 ## Testing
 
@@ -300,15 +312,19 @@ the suite. Per test file:
   non-negative; a discrete Neumann eigenmode decays at exactly the predicted
   rate `(1 − dt·α·λ_h)^N`; population climbs a static food gradient while its
   total is conserved to `1e-12`; a sharp density step advected downgradient
-  never goes negative (donor-cell positivity, zero floor activation); any
+  never goes negative (donor-cell positivity, zero floor activation), and
+  neither does a density sitting in a V-shaped (or pyramidal) attractant
+  valley, where the cell drains through both/all four faces at once and the
+  declared `max_rate` must be the two-sided one; any
   `FluxTerm` telescopes to zero net divergence; the bounded logistic term
   stays finite and non-negative even where the capacity field is zero.
 * `tests/test_integration.py` — `Field`/`Simulator` integration: all-zero
   initial conditions are an exact fixed point of the full agriculture system;
   full dynamics from random bumps stay non-negative with negligible
   cumulative floor truncation; field/simulator construction validates shape,
-  `dx`, `bc_type`, and positive `dt`; the runtime guard trips on an
-  oversized `dt` and on injected non-finite values; the derived `dt` matches
+  `dx`, `bc_type`, and positive `dt`; an oversized `dt` is rejected at
+  construction, and a `dt` made unsafe afterwards still trips the runtime
+  guard, as do injected non-finite values; the derived `dt` matches
   the rate bound exactly; the floor diagnostics correctly report an injected
   negative excursion.
 * `tests/test_configs.py` — the two bundled configurations: forward Euler's
@@ -322,8 +338,9 @@ the suite. Per test file:
   the same seed.
 * `tests/test_jit.py` — the jitted and eager (`jax.disable_jit()`) step paths
   agree to `atol=1e-12` in float64 over 50 steps; the runtime guards and
-  diagnostics flush still work under jit; consecutive steps reuse one
-  compiled executable (no retracing).
+  diagnostics flush still work under jit (including a `NaN` injected into a
+  field, which trips the truncation guard at the next sync); consecutive steps
+  reuse one compiled executable (no retracing).
 * `tests/test_runner.py` — `SimulationRunner`'s bounded/strided history
   (float32 snapshots, correct stride, streaming min/max matching a direct
   computation over the full history), the single-frame and many-field
