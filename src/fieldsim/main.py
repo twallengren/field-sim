@@ -2,7 +2,7 @@ import argparse
 import sys
 
 from fieldsim.simulation_runner import SimulationRunner
-from fieldsim.utils.constants import FOOD, INFRASTRUCTURE, POPULATION, SOIL
+from fieldsim.utils.constants import FOOD, INFRASTRUCTURE, POPULATION, SOIL, WATER
 
 #: Registry of bundled simulations: name -> (get_config, field names to plot).
 _SIMULATIONS = {
@@ -11,6 +11,10 @@ _SIMULATIONS = {
     "civilization": (
         "fieldsim.simulations.civilization",
         [POPULATION, FOOD, INFRASTRUCTURE, SOIL],
+    ),
+    "ecology": (
+        "fieldsim.simulations.ecology",
+        [POPULATION, FOOD, WATER, SOIL],
     ),
 }
 
@@ -43,11 +47,11 @@ def build_parser():
     )
     parser.add_argument(
         "--preset", default=None,
-        help="Civilization catalog preset (default: settlement).",
+        help="Catalog preset for civilization or ecology.",
     )
     parser.add_argument(
         "--param", action="append", default=[], metavar="KEY=VALUE",
-        help="Override a civilization parameter; may be repeated.",
+        help="Override a civilization or ecology parameter; may be repeated.",
     )
     parser.add_argument(
         "--years", type=float, default=None,
@@ -112,7 +116,7 @@ def main(argv=None):
         config_kwargs["n"] = args.resolution
     if args.years is not None:
         config_kwargs["total_time"] = args.years
-    if args.sim == "civilization":
+    if args.sim in ("civilization", "ecology"):
         if args.preset is not None:
             config_kwargs["preset"] = args.preset
         parameters = {}
@@ -125,7 +129,7 @@ def main(argv=None):
         if parameters:
             config_kwargs["parameters"] = parameters
     elif args.preset is not None or args.param:
-        parser.error("--preset and --param are only valid with --sim civilization")
+        parser.error("--preset and --param are only valid with --sim civilization or ecology")
     cfg = get_config(**config_kwargs)
 
     runner = SimulationRunner(cfg, max_frames=args.max_frames)

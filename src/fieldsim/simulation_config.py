@@ -11,7 +11,8 @@ class SimulationConfig:
     """
 
     def __init__(self, name, field_defs, lagrangian_terms, flux_terms, sources,
-                 total_time, safety=0.8, adaptive=False, max_dt=0.1):
+                 total_time, safety=0.8, adaptive=False, max_dt=0.1,
+                 derived_fields=None):
         """
         Args:
             name: str — name of the simulation.
@@ -41,3 +42,4 @@ class SimulationConfig:
         self.safety = float(safety)
         self.adaptive = bool(adaptive)
         self.max_dt = float(max_dt)
+        self.derived_fields = dict(derived_fields or {})

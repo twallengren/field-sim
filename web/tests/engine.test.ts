@@ -21,7 +21,7 @@ function setup(
     ...result,
     n,
     boundary,
-    parameters: { ...result.parameters, ...parameterPatch },
+    parameters: { ...result.parameters, ...parameterPatch } as Parameters,
   };
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import reference from './fixtures/reference.json';
+import ecologyReference from './fixtures/ecology-reference.json';
 import type { FieldName, Fields, Model, Setup } from '../src/contracts';
 import { initializeFields, Simulation } from '../src/engine/simulation';
 
@@ -16,7 +17,7 @@ interface ReferenceCase {
   expected: Partial<Record<FieldName, number[]>>;
 }
 
-const fixture = reference as { version: number; cases: ReferenceCase[] };
+const fixture = {version:reference.version,cases:[...reference.cases,...ecologyReference.cases]} as unknown as { version: number; cases: ReferenceCase[] };
 
 function expectArraysClose(
   actual: ArrayLike<number>,
@@ -61,13 +62,16 @@ describe('Python/browser reference parity', () => {
   }
 
   for (const referenceCase of fixture.cases.filter(
-    (candidate) => candidate.model === 'civilization' && candidate.steps === 1,
+    (candidate) => (candidate.model === 'civilization' || candidate.model === 'ecology') && candidate.steps === 1,
   )) {
     it(`initializer-${referenceCase.name}`, () => {
       const actual = initializeFields(
         referenceCase.setup.n,
         referenceCase.setup.seed,
         referenceCase.setup.boundary,
+        referenceCase.model,
+        referenceCase.setup.parameters,
+        referenceCase.setup.preset,
       );
       for (const [name, expected] of Object.entries(referenceCase.fields)) {
         expectArraysClose(actual[name as FieldName], expected, `initializer/${name}`);

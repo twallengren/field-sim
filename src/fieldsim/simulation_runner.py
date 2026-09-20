@@ -73,6 +73,7 @@ class SimulationRunner:
             adaptive=config.adaptive,
             safety=config.safety,
             max_dt=config.max_dt,
+            derived_fields=config.derived_fields,
         )
         self.history = []
         self.history_times = []

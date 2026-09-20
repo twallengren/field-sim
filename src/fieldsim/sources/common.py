@@ -188,3 +188,153 @@ class SoilSource(SourceTerm):
             expression_fn=expression_fn,
             max_rate_fn=max_rate_fn,
         )
+
+
+def ecology_budget_terms(values, parameters):
+    """Return every local ecology source and water-budget flow.
+
+    Keeping the intermediate flows in one pure function makes the stock
+    equations and the reported water budget use identical signs and
+    half-saturation factors. All arrays describe rates at the same pre-step
+    state.
+    """
+    population = values["population"]
+    food = values["food"]
+    water = values["water"]
+    soil = values["soil"]
+    fertility = values["fertility"]
+    water_sources = values["waterSources"]
+
+    cultivation = population / (population + parameters["cultivationScale"])
+    hydrated = water / (1.0 + water)
+    harvest = (
+        parameters["yield"] * cultivation * fertility * soil * hydrated
+    )
+    recharge = (
+        parameters["replenishmentRate"]
+        * water_sources
+        * jnp.maximum(1.0 - water / parameters["sourceCapacity"], 0.0)
+    )
+    domestic_use = parameters["waterConsumption"] * population * hydrated
+    agricultural_use = parameters["harvestWaterCost"] * harvest
+    food_use = parameters["consumption"] * population * food / (1.0 + food)
+    spoilage_loss = parameters["spoilage"] * food
+    support = jnp.minimum(
+        food / parameters["foodSupport"],
+        water / parameters["waterSupport"],
+    )
+    population_growth = (
+        parameters["growth"]
+        * population
+        * (support - population)
+        / (support + population + 1e-6)
+    )
+    recovery_coefficient = (
+        parameters["soilRecovery"]
+        * hydrated
+        * (1.0 - cultivation)
+        * (1.0 - population / (1.0 + population))
+    )
+    depletion_coefficient = (
+        parameters["erosion"] * cultivation
+        + parameters["settlementErosion"] * population / (1.0 + population)
+    )
+    soil_recovery = recovery_coefficient * (1.0 - soil)
+    soil_depletion = depletion_coefficient * soil
+    return {
+        "cultivation": cultivation,
+        "hydrated": hydrated,
+        "harvest": harvest,
+        "recharge": recharge,
+        "domesticUse": domestic_use,
+        "agriculturalUse": agricultural_use,
+        "foodUse": food_use,
+        "spoilageLoss": spoilage_loss,
+        "support": support,
+        "population": population_growth,
+        "food": harvest - food_use - spoilage_loss,
+        "water": recharge - domestic_use - agricultural_use,
+        "recoveryCoefficient": recovery_coefficient,
+        "depletionCoefficient": depletion_coefficient,
+        "soilRecovery": soil_recovery,
+        "soilDepletion": soil_depletion,
+        "soil": soil_recovery - soil_depletion,
+    }
+
+
+class EcologyPopulationSource(SourceTerm):
+    """Water-and-food-limited bounded population growth."""
+
+    def __init__(self, parameters):
+        super().__init__(
+            name="ecology population growth",
+            target_field_name="population",
+            expression_fn=lambda values: ecology_budget_terms(values, parameters)["population"],
+            max_rate_fn=lambda values: abs(parameters["growth"]),
+        )
+
+
+class EcologyFoodSource(SourceTerm):
+    """Harvest minus saturating consumption and spoilage."""
+
+    def __init__(self, parameters):
+        def max_rate(values):
+            return (
+                abs(parameters["consumption"])
+                * float(jnp.max(values["population"]))
+                + abs(parameters["spoilage"])
+            )
+
+        super().__init__(
+            name="ecology food balance",
+            target_field_name="food",
+            expression_fn=lambda values: ecology_budget_terms(values, parameters)["food"],
+            max_rate_fn=max_rate,
+        )
+
+
+class EcologyWaterSource(SourceTerm):
+    """Source recharge minus domestic and agricultural withdrawals."""
+
+    def __init__(self, parameters):
+        def max_rate(values):
+            terms = ecology_budget_terms(values, parameters)
+            water = values["water"]
+            drainage = (
+                parameters["replenishmentRate"]
+                * values["waterSources"]
+                / parameters["sourceCapacity"]
+                + parameters["waterConsumption"] * values["population"] / (1.0 + water)
+                + parameters["harvestWaterCost"]
+                * parameters["yield"]
+                * terms["cultivation"]
+                * values["fertility"]
+                * values["soil"]
+                / (1.0 + water)
+            )
+            return float(jnp.max(drainage))
+
+        super().__init__(
+            name="ecology water balance",
+            target_field_name="water",
+            expression_fn=lambda values: ecology_budget_terms(values, parameters)["water"],
+            max_rate_fn=max_rate,
+        )
+
+
+class EcologySoilSource(SourceTerm):
+    """Hydration-dependent fallow recovery minus cultivation and settlement loss."""
+
+    def __init__(self, parameters):
+        def max_rate(values):
+            terms = ecology_budget_terms(values, parameters)
+            return float(jnp.max(
+                terms["recoveryCoefficient"] + terms["depletionCoefficient"]
+            ))
+
+        super().__init__(
+            name="ecology soil balance",
+            target_field_name="soil",
+            expression_fn=lambda values: ecology_budget_terms(values, parameters)["soil"],
+            max_rate_fn=max_rate,
+        )

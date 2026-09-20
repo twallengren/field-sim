@@ -16,32 +16,21 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Reference generation enables JAX float64. Generate expectations from Python, never from the browser being tested. CI regenerates fixtures before browser parity tests. Browser acceptance uses the production build under `/field-sim/`.
+Reference generation enables JAX float64. Generate expectations from Python, never from the browser being tested. Browser parity covers ecology transport, coupled sources, derived cultivation, water accounting, and both boundary modes. Browser acceptance uses the production build under `/field-sim/`.
 
-## Add a demo or model
+## Add a model or preset
 
-`src/fieldsim/catalog.json` controls gallery ordering, descriptions, model identity, defaults, highlighted fields, and ranges. It is packaged with Python and imported by Vite. Keep stable identifiers for shared links.
+`src/fieldsim/catalog.json` is shared by Python and Vite. It defines preset order, model identity, descriptions, fields, defaults, parameter definitions, and browser ranges; the TypeScript catalog adapter places ecology presets first and assigns the ecology control groups used by the UI. Keep stable preset and parameter identifiers because they appear in setup links and fixtures.
 
-A new parameter requires coordinated changes to the catalog, TypeScript contract, both implementations, stability bounds, docs, and parity cases. New Python operators must declare `max_rate`. Conservative transport uses face fluxes.
+A new ecology coefficient requires coordinated changes to the catalog, Python source terms and rate bound, browser equations and rate bound, initialization or parity fixtures when relevant, tests, and model/numerics documentation. New Python operators must declare `max_rate`; conservative transport uses face fluxes. Keep water-stock accounting beside the equations whenever a source or withdrawal changes the ledger.
 
-Python retains general composition through `Field`, `LagrangianTerm`, `FluxTerm`, `SourceTerm`, and `SimulationConfig`. The browser supports registered models with explicit equations. `shared/IMPLEMENTATION.md` records array layout, initialization, worker messages, and ownership contracts.
+Python retains general composition through `Field`, `LagrangianTerm`, `FluxTerm`, `SourceTerm`, and `SimulationConfig`. The browser supports registered models with explicit equations. `shared/IMPLEMENTATION.md` records the cross-runtime array, initializer, worker, tile, sharing, and ownership contracts.
 
-## Specialist agent workflow
+## Browser views and setup links
 
-Use at most three working subagents plus a primary technical lead. Every task specifies its specialist role, allowed files, read-only dependencies, frozen interfaces, validation, and handoff criteria.
+Tile layout is view state, not simulation state. A tile has a stable ID, an ordered list of unique field layers, visibility and opacity per layer, and one paint target from those layers. There is no fixed two-view limit. A model's field descriptor marks fields as dynamic, static, or derived; derived fields may be rendered and selected as a tile target, but a paint attempt is rejected because they are read-only.
 
-| Assignment | Model | Role |
-| --- | --- | --- |
-| Python engine | Sol / high | Senior scientific Python developer; expert in JAX, conservative PDEs, and stability |
-| Browser engine | Sol / high | Senior TypeScript systems developer; expert in browser numerics and Web Workers |
-| UI components | Luna / medium | Senior frontend developer specializing in accessible scientific interfaces |
-| App integration | Sol / high | Senior frontend engineer; expert in Canvas and asynchronous state |
-| Documentation/release | Luna / medium | Senior developer specializing in documentation and reproducible CI/CD |
-| Browser acceptance | Luna / medium | Senior QA engineer specializing in browser interaction and accessibility |
-
-The primary is the technical lead and scientific-software architect. It owns shared contracts, manifests, lockfiles, preset approval, scientific review, and release acceptance. If session capacity prevents an assignment, the primary completes it and reports the deviation rather than attributing it to a specialist.
-
-Build engines and presentational UI in parallel, then transfer UI ownership to integration. Documentation and acceptance follow the actual interfaces. No recursive delegation or concurrent edits to another agent's files. Each handoff reports changes, test results, unresolved issues, and requested contract changes.
+The renderer owns one scale per field key and one history series per unique visible field. A tile change must preserve those semantics when it adds, removes, reorders, or overlays layers. Setup serialization includes model parameters and tile layout in version 2 and excludes arrays, evolved time, interventions, and history. Version 1 links for legacy presets remain valid; do not reinterpret their parameter payloads.
 
 ## GitHub Pages
 

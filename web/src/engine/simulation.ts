@@ -1,4 +1,4 @@
-import { catalog, getPreset, parameterDefinitions } from '../catalog';
+import { catalog, getParameterDefinitions, getPreset } from '../catalog';
 import type {
   Boundary,
   Brush,
@@ -11,12 +11,21 @@ import type {
   Setup,
 } from '../contracts';
 
-const FIELD_NAMES: readonly FieldName[] = [
+const LEGACY_FIELD_NAMES: readonly FieldName[] = [
   'population',
   'food',
   'infrastructure',
   'soil',
   'fertility',
+];
+const ECOLOGY_FIELD_NAMES: readonly FieldName[] = [
+  'population',
+  'food',
+  'water',
+  'soil',
+  'fertility',
+  'waterSources',
+  'cultivation',
 ];
 
 const DOMAIN_LENGTH = catalog.domainLength;
@@ -26,7 +35,7 @@ const INFRA_HALF_SATURATION = catalog.infrastructureHalfSaturation;
 const SAFETY = 0.8;
 const MAX_DT = 0.1;
 
-type MutableFields = Record<FieldName, Float64Array>;
+type MutableFields = Record<string, Float64Array>;
 
 interface Bump {
   x: number;
@@ -96,27 +105,86 @@ function evaluateBumps(
 }
 
 /** Deterministic initial conditions shared by every browser model. */
-export function initializeFields(n: number, seed: number, boundary: Boundary): Fields {
+export function initializeFields(
+  n: number,
+  seed: number,
+  boundary: Boundary,
+  model: Model = 'civilization',
+  parameters?: Parameters,
+  preset?: string,
+): Fields {
   const random = mulberry32(seed);
   const populationBumps = makeBumps(random, 6, [0.4, 1.2], [0.3, 0.8]);
   const foodBumps = makeBumps(random, 8, [0.5, 1.5], [0.5, 1.2]);
   const fertilityBumps = makeBumps(random, 8, [0.5, 1.5], [0.6, 1.5]);
   const size = n * n;
 
-  return {
-    population: evaluateBumps(n, boundary, populationBumps, 0.05),
-    food: evaluateBumps(n, boundary, foodBumps, 0.2),
+  const population = evaluateBumps(n, boundary, populationBumps, 0.05);
+  const food = evaluateBumps(n, boundary, foodBumps, 0.2);
+  const fertility = evaluateBumps(n, boundary, fertilityBumps, 0.25);
+  if (model !== 'ecology') return {
+    population,
+    food,
     infrastructure: new Float64Array(size),
     soil: new Float64Array(size).fill(1),
-    fertility: evaluateBumps(n, boundary, fertilityBumps, 0.25),
+    fertility,
+  };
+
+  if (parameters === undefined) {
+    throw new Error('Ecology initialization requires model parameters.');
+  }
+  const sourceBumps = makeBumps(random, 5, [0.55, 1], [0.45, 1]);
+  const waterSources = evaluateBumps(n, boundary, sourceBumps, 0);
+  for (let index = 0; index < size; index += 1) {
+    waterSources[index] = Math.min(1, Math.max(0, waterSources[index]));
+  }
+  if (preset === 'water_overuse') {
+    for (let index = 0; index < size; index++) population[index] *= 0.35;
+  }
+  const cultivation = deriveCultivation(population, parameters.cultivationScale);
+  const water = new Float64Array(size);
+  for (let index = 0; index < size; index += 1) {
+    water[index] = parameters.sourceCapacity * waterSources[index];
+  }
+  return {
+    population,
+    food,
+    water,
+    soil: new Float64Array(size).fill(preset === 'soil_recovery' ? 0.25 : 1),
+    fertility,
+    waterSources,
+    cultivation,
   };
 }
 
-function copyAndValidateFields(defaults: Fields, supplied: Fields | undefined, size: number): MutableFields {
+function deriveCultivation(population: Float64Array, scale: number): Float64Array {
+  const result = new Float64Array(population.length);
+  for (let index = 0; index < population.length; index += 1) {
+    result[index] = population[index] / (population[index] + scale);
+  }
+  return result;
+}
+
+function fieldNames(model: Model): readonly FieldName[] {
+  return model === 'ecology' ? ECOLOGY_FIELD_NAMES : LEGACY_FIELD_NAMES;
+}
+
+function fieldUpperBound(name: FieldName): number | undefined {
+  return name === 'soil' || name === 'waterSources' || name === 'cultivation' ? 1 : undefined;
+}
+
+function copyAndValidateFields(
+  defaults: Fields,
+  supplied: Fields | undefined,
+  size: number,
+  model: Model,
+  cultivationScale: number,
+): MutableFields {
   const result = {} as MutableFields;
   const partial = supplied as Partial<Record<FieldName, ArrayLike<number>>> | undefined;
 
-  for (const name of FIELD_NAMES) {
+  for (const name of fieldNames(model)) {
+    if (model === 'ecology' && name === 'cultivation') continue;
     const source = partial?.[name] ?? defaults[name];
     if (source.length !== size) {
       throw new RangeError(`Field ${name} must contain ${size} values; received ${source.length}.`);
@@ -127,7 +195,8 @@ function copyAndValidateFields(defaults: Fields, supplied: Fields | undefined, s
       if (!Number.isFinite(value)) {
         throw new RangeError(`Field ${name} contains a non-finite value at index ${index}.`);
       }
-      if (value < 0 || (name === 'soil' && value > 1)) {
+      const upperBound = fieldUpperBound(name);
+      if (value < 0 || (upperBound !== undefined && value > upperBound)) {
         throw new RangeError(
           `Field ${name} contains an out-of-range value ${value} at index ${index}.`,
         );
@@ -135,12 +204,21 @@ function copyAndValidateFields(defaults: Fields, supplied: Fields | undefined, s
     }
     result[name] = values;
   }
+  if (model === 'ecology') {
+    result.cultivation = deriveCultivation(result.population, cultivationScale);
+  }
   return result;
 }
 
-function validateParameters(parameters: Parameters): Parameters {
-  const copy = {} as Parameters;
-  for (const definition of parameterDefinitions) {
+function validateParameters(parameters: Parameters, model: Model): Parameters {
+  const copy: Parameters = {};
+  const definitions = getParameterDefinitions(model);
+  const suppliedKeys = Object.keys(parameters);
+  const expectedKeys = new Set(definitions.map((definition) => definition.key));
+  if (suppliedKeys.length !== definitions.length || suppliedKeys.some((key) => !expectedKeys.has(key))) {
+    throw new RangeError(`Parameters do not match the ${model} model schema.`);
+  }
+  for (const definition of definitions) {
     const value = parameters[definition.key];
     if (!Number.isFinite(value)) {
       throw new RangeError(`Parameter ${definition.key} must be finite.`);
@@ -156,7 +234,9 @@ function validateParameters(parameters: Parameters): Parameters {
 }
 
 function validateSetup(setup: Setup): { model: Model; parameters: Parameters } {
-  if (setup.version !== 1) throw new RangeError(`Unsupported setup version ${String(setup.version)}.`);
+  if (setup.version !== 1 && setup.version !== 2) {
+    throw new RangeError(`Unsupported setup version ${String(setup.version)}.`);
+  }
   if (!Number.isInteger(setup.n) || setup.n < 2 || setup.n > 128) {
     throw new RangeError(`Grid size n must be an integer in [2, 128]; received ${setup.n}.`);
   }
@@ -167,7 +247,7 @@ function validateSetup(setup: Setup): { model: Model; parameters: Parameters } {
   // shared seed-coercion contract for negative and fractional finite seeds.
   if (!Number.isFinite(setup.seed)) throw new RangeError('Seed must be finite.');
   const preset = getPreset(setup.preset);
-  return { model: preset.model, parameters: validateParameters(setup.parameters) };
+  return { model: preset.model, parameters: validateParameters(setup.parameters, preset.model) };
 }
 
 function addDiffusion(
@@ -287,6 +367,11 @@ export class Simulation {
   private lastDt: number;
   private cumulativeTruncatedMass = 0;
   private readonly cumulativeInterventionMass: Partial<Record<FieldName, number>> = {};
+  private initialWater = 0;
+  private cumulativeRecharge = 0;
+  private cumulativeDomesticUse = 0;
+  private cumulativeAgriculturalUse = 0;
+  private cumulativeWaterInterventions = 0;
 
   constructor(setup: Setup, initialFields?: Fields) {
     const validated = validateSetup(setup);
@@ -296,8 +381,22 @@ export class Simulation {
     this.parameters = validated.parameters;
     this.dx = DOMAIN_LENGTH / this.n;
     this.cellArea = this.dx * this.dx;
-    const defaults = initializeFields(this.n, setup.seed, this.boundary);
-    this.fields = copyAndValidateFields(defaults, initialFields, this.n * this.n);
+    const defaults = initializeFields(
+      this.n,
+      setup.seed,
+      this.boundary,
+      this.model,
+      this.parameters,
+      setup.preset,
+    );
+    this.fields = copyAndValidateFields(
+      defaults,
+      initialFields,
+      this.n * this.n,
+      this.model,
+      this.parameters.cultivationScale,
+    );
+    if (this.model === 'ecology') this.initialWater = this.total(this.fields.water);
     this.lastDt = this.stableTimeStep();
   }
 
@@ -315,6 +414,11 @@ export class Simulation {
         );
       }
       dt = dtOverride;
+    }
+
+    if (this.model === 'ecology') {
+      this.stepEcology(dt);
+      return;
     }
 
     const { population, food, infrastructure, soil, fertility } = this.fields;
@@ -379,7 +483,7 @@ export class Simulation {
       }
     }
 
-    const next = {
+    const next: MutableFields = {
       population: new Float64Array(size),
       food: new Float64Array(size),
       infrastructure: this.model === 'civilization'
@@ -387,7 +491,7 @@ export class Simulation {
         : infrastructure,
       soil: this.model === 'civilization' ? new Float64Array(size) : soil,
       fertility,
-    } satisfies MutableFields;
+    };
 
     for (let index = 0; index < size; index += 1) {
       next.population[index] = population[index] + dt * populationRhs[index];
@@ -455,15 +559,25 @@ export class Simulation {
   }
 
   setParameters(parameters: Parameters): void {
-    const replacement = validateParameters(parameters);
-    const nextDt = this.stableTimeStep(this.fields, replacement);
+    const replacement = validateParameters(parameters, this.model);
+    const candidateFields = this.model === 'ecology'
+      ? {
+        ...this.fields,
+        cultivation: deriveCultivation(this.fields.population, replacement.cultivationScale),
+      }
+      : this.fields;
+    const nextDt = this.stableTimeStep(candidateFields, replacement);
     this.parameters = replacement;
+    this.fields = candidateFields;
     this.lastDt = nextDt;
   }
 
   paint(brush: Brush): void {
-    if (!FIELD_NAMES.includes(brush.field)) {
+    if (!fieldNames(this.model).includes(brush.field)) {
       throw new RangeError(`Unknown brush field ${String(brush.field)}.`);
+    }
+    if (this.model === 'ecology' && brush.field === 'cultivation') {
+      throw new RangeError('Field cultivation is derived and cannot be painted.');
     }
     for (const [label, value] of [
       ['x', brush.x],
@@ -496,7 +610,7 @@ export class Simulation {
         const index = row * this.n + column;
         const oldValue = oldValues[index];
         let newValue = Math.max(0, oldValue + brush.amount);
-        if (brush.field === 'soil') newValue = Math.min(1, newValue);
+        if (fieldUpperBound(brush.field) !== undefined) newValue = Math.min(1, newValue);
         if (!Number.isFinite(newValue)) {
           throw new RangeError(`Brush application would make ${brush.field} non-finite.`);
         }
@@ -506,17 +620,23 @@ export class Simulation {
     }
     const massChange = densityChange * this.cellArea;
     const candidateFields = { ...this.fields, [brush.field]: values } as MutableFields;
+    if (this.model === 'ecology' && brush.field === 'population') {
+      candidateFields.cultivation = deriveCultivation(values, this.parameters.cultivationScale);
+    }
     const nextDt = this.stableTimeStep(candidateFields);
-    this.fields[brush.field] = values;
+    this.fields = candidateFields;
     this.cumulativeInterventionMass[brush.field] =
       (this.cumulativeInterventionMass[brush.field] ?? 0) + massChange;
+    if (this.model === 'ecology' && brush.field === 'water') {
+      this.cumulativeWaterInterventions += massChange;
+    }
     this.lastDt = nextDt;
   }
 
   snapshot(): Snapshot {
-    const fields = {} as Fields;
-    const metrics = {} as Record<FieldName, FieldMetric>;
-    for (const name of FIELD_NAMES) {
+    const fields: Fields = {};
+    const metrics: Record<string, FieldMetric> = {};
+    for (const name of fieldNames(this.model)) {
       const copy = this.fields[name].slice();
       fields[name] = copy;
       let sum = 0;
@@ -534,7 +654,7 @@ export class Simulation {
         mean: sum / copy.length,
       };
     }
-    return {
+    const snapshot: Snapshot = {
       n: this.n,
       time: this.currentTime,
       step: this.stepCount,
@@ -544,6 +664,21 @@ export class Simulation {
       truncatedMass: this.cumulativeTruncatedMass,
       interventionMass: { ...this.cumulativeInterventionMass },
     };
+    if (this.model === 'ecology') {
+      const current = metrics.water.total;
+      snapshot.waterBudget = {
+        initial: this.initialWater,
+        recharged: this.cumulativeRecharge,
+        domesticUse: this.cumulativeDomesticUse,
+        agriculturalUse: this.cumulativeAgriculturalUse,
+        interventions: this.cumulativeWaterInterventions,
+        current,
+        residual: this.initialWater + this.cumulativeRecharge
+          + this.cumulativeWaterInterventions - this.cumulativeDomesticUse
+          - this.cumulativeAgriculturalUse - current,
+      };
+    }
+    return snapshot;
   }
 
   /** Combined fractional loss-rate bound, available for numerical diagnostics. */
@@ -562,6 +697,41 @@ export class Simulation {
       inverseDx,
       this.boundary,
     );
+    if (this.model === 'ecology') {
+      const waterFluxRate = gradientFluxRate(
+        fields.water,
+        p.chiWater,
+        this.n,
+        inverseDx,
+        this.boundary,
+      );
+      let maximumWaterLoss = 0;
+      let maximumSoilRate = 0;
+      for (let index = 0; index < fields.population.length; index += 1) {
+        const population = fields.population[index];
+        const water = fields.water[index];
+        const cultivation = fields.cultivation[index];
+        const waterSaturation = water / (1 + water);
+        const waterLoss = p.replenishmentRate * fields.waterSources[index] / p.sourceCapacity
+          + p.waterConsumption * population / (1 + water)
+          + p.harvestWaterCost * p.yield * cultivation * fields.fertility[index]
+            * fields.soil[index] / (1 + water);
+        const recovery = p.soilRecovery * waterSaturation * (1 - cultivation)
+          * (1 - population / (1 + population));
+        const depletion = p.erosion * cultivation
+          + p.settlementErosion * population / (1 + population);
+        maximumWaterLoss = Math.max(maximumWaterLoss, waterLoss);
+        maximumSoilRate = Math.max(maximumSoilRate, recovery + depletion);
+      }
+      const populationRate = diffusionScale * p.dp + foodFluxRate + waterFluxRate + p.growth;
+      const foodRate = diffusionScale * p.df + p.consumption * maxPopulation + p.spoilage;
+      const waterRate = diffusionScale * p.dw + maximumWaterLoss;
+      const rate = Math.max(populationRate, foodRate, waterRate, maximumSoilRate);
+      if (!Number.isFinite(rate) || rate < 0) {
+        throw new Error(`Cannot derive a timestep from invalid rate ${rate}.`);
+      }
+      return rate;
+    }
     const infrastructureFluxRate = this.model === 'civilization'
       ? gradientFluxRate(
         fields.infrastructure,
@@ -591,6 +761,140 @@ export class Simulation {
       throw new Error(`Cannot derive a timestep from invalid rate ${rate}.`);
     }
     return rate;
+  }
+
+  private stepEcology(dt: number): void {
+    const population = this.fields.population;
+    const food = this.fields.food;
+    const water = this.fields.water;
+    const soil = this.fields.soil;
+    const fertility = this.fields.fertility;
+    const waterSources = this.fields.waterSources;
+    const cultivation = this.fields.cultivation;
+    const size = this.n * this.n;
+    const populationRhs = new Float64Array(size);
+    const foodRhs = new Float64Array(size);
+    const waterRhs = new Float64Array(size);
+    const soilRhs = new Float64Array(size);
+    const inverseDx = 1 / this.dx;
+    const inverseDxSquared = inverseDx * inverseDx;
+    const p = this.parameters;
+
+    addDiffusion(populationRhs, population, p.dp, this.n, inverseDxSquared, this.boundary);
+    addDiffusion(foodRhs, food, p.df, this.n, inverseDxSquared, this.boundary);
+    addDiffusion(waterRhs, water, p.dw, this.n, inverseDxSquared, this.boundary);
+    addGradientFlux(
+      populationRhs,
+      population,
+      food,
+      p.chiFood,
+      this.n,
+      inverseDx,
+      this.boundary,
+    );
+    addGradientFlux(
+      populationRhs,
+      population,
+      water,
+      p.chiWater,
+      this.n,
+      inverseDx,
+      this.boundary,
+    );
+
+    let rechargeIntegral = 0;
+    let domesticUseIntegral = 0;
+    let agriculturalUseIntegral = 0;
+    for (let index = 0; index < size; index += 1) {
+      const populationValue = population[index];
+      const foodValue = food[index];
+      const waterValue = water[index];
+      const soilValue = soil[index];
+      const cultivationValue = cultivation[index];
+      const waterSaturation = waterValue / (1 + waterValue);
+      const harvest = p.yield * cultivationValue * fertility[index] * soilValue
+        * waterSaturation;
+      const recharge = p.replenishmentRate * waterSources[index]
+        * Math.max(1 - waterValue / p.sourceCapacity, 0);
+      const domesticUse = p.waterConsumption * populationValue * waterSaturation;
+      const agriculturalUse = p.harvestWaterCost * harvest;
+      const foodUse = p.consumption * populationValue * foodValue / (1 + foodValue);
+      const spoilageLoss = p.spoilage * foodValue;
+      const support = Math.min(foodValue / p.foodSupport, waterValue / p.waterSupport);
+      const recovery = p.soilRecovery * waterSaturation * (1 - cultivationValue)
+        * (1 - populationValue / (1 + populationValue)) * (1 - soilValue);
+      const depletion = (p.erosion * cultivationValue
+        + p.settlementErosion * populationValue / (1 + populationValue)) * soilValue;
+
+      populationRhs[index] += p.growth * populationValue * (support - populationValue)
+        / (support + populationValue + EPSILON);
+      foodRhs[index] += harvest - foodUse - spoilageLoss;
+      waterRhs[index] += recharge - domesticUse - agriculturalUse;
+      soilRhs[index] = recovery - depletion;
+      rechargeIntegral += recharge;
+      domesticUseIntegral += domesticUse;
+      agriculturalUseIntegral += agriculturalUse;
+    }
+
+    const next: MutableFields = {
+      population: new Float64Array(size),
+      food: new Float64Array(size),
+      water: new Float64Array(size),
+      soil: new Float64Array(size),
+      fertility,
+      waterSources,
+      cultivation: new Float64Array(size),
+    };
+    for (let index = 0; index < size; index += 1) {
+      next.population[index] = population[index] + dt * populationRhs[index];
+      next.food[index] = food[index] + dt * foodRhs[index];
+      next.water[index] = water[index] + dt * waterRhs[index];
+      next.soil[index] = soil[index] + dt * soilRhs[index];
+    }
+
+    let stepTruncatedMass = 0;
+    for (const name of ['population', 'food', 'water', 'soil'] as const) {
+      const values = next[name];
+      let fieldCorrection = 0;
+      let postFloorMass = 0;
+      for (let index = 0; index < size; index += 1) {
+        const value = values[index];
+        if (!Number.isFinite(value)) {
+          throw new Error(`Non-finite ${name} state produced at index ${index}.`);
+        }
+        if (value < 0) {
+          fieldCorrection += -value * this.cellArea;
+          values[index] = 0;
+        } else if (name === 'soil' && value > 1) {
+          fieldCorrection += (value - 1) * this.cellArea;
+          values[index] = 1;
+        }
+        postFloorMass += values[index] * this.cellArea;
+      }
+      const correctionBudget = 1e-8 * postFloorMass + 1e-30;
+      if (!Number.isFinite(fieldCorrection) || fieldCorrection > correctionBudget) {
+        throw new Error(
+          `Numerical correction for ${name} (${fieldCorrection}) exceeds budget ${correctionBudget}; step was not committed.`,
+        );
+      }
+      stepTruncatedMass += fieldCorrection;
+    }
+    next.cultivation = deriveCultivation(next.population, p.cultivationScale);
+
+    this.fields = next;
+    this.cumulativeTruncatedMass += stepTruncatedMass;
+    this.cumulativeRecharge += dt * rechargeIntegral * this.cellArea;
+    this.cumulativeDomesticUse += dt * domesticUseIntegral * this.cellArea;
+    this.cumulativeAgriculturalUse += dt * agriculturalUseIntegral * this.cellArea;
+    this.currentTime += dt;
+    this.stepCount += 1;
+    this.lastDt = dt;
+  }
+
+  private total(values: Float64Array): number {
+    let sum = 0;
+    for (const value of values) sum += value;
+    return sum * this.cellArea;
   }
 
   private stableTimeStep(

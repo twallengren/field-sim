@@ -2,66 +2,64 @@
 
 ## Grid and boundaries
 
-Fields share one uniform 2D grid and scalar spacing `dx`. Centers are `(i+1/2)dx`. Bundled domains have side length 10. Python supports rectangular arrays; bundled configurations and the browser use square grids.
+All fields share a uniform two-dimensional grid. The bundled domain has side length `L = 10`; cell centers are `(i + 1/2) dx`, with `dx = L/n`, and arrays are row-major. Python also accepts rectangular arrays in lower-level APIs; the browser and bundled setups use square grids.
 
-**Neumann** means homogeneous zero flux across exterior faces. It does not copy boundary rows, zero the field, or create internal obstacles. **Periodic** connects opposite edges, including diffusion and upwind seam fluxes. Fields and transport operators must agree on boundary mode.
+Neumann means homogeneous zero flux across exterior faces. It does not copy boundary rows, zero a field, or create internal obstacles. Periodic connects opposite edges for diffusion, upwind transport, and brushes. Every operator in a run uses the selected boundary mode.
 
-## Variational diffusion
+## Diffusion and conservative transport
 
-Python differentiates a discrete energy with JAX:
+The Python diffusion term is the gradient of a discrete face energy:
 
 ```text
 E = alpha/2 * sum_faces (phi_right - phi_left)^2
 diffusion RHS = -grad(E)/dx^2
 ```
 
-Neumann sums interior faces; periodic includes wraparound faces. Cell area cancels the squared gradient's spacing factors in the 2D energy. The resulting compact five-point Laplacian damps checkerboard modes and conserves the field integral. The browser evaluates the equivalent stencil directly, without autodiff.
+The browser evaluates the equivalent five-point stencil. Neumann sums interior faces; periodic includes the seam. Diffusion conserves the field integral to round-off.
 
-## Conservative upwind transport
-
-For density `P` and attractant `A`, an oriented face carries:
+For population density `P` moving up an attractant `A`, each oriented face uses donor-cell flux:
 
 ```text
 u = chi * (A_right - A_left)/dx
-J = max(u,0)*P_left + min(u,0)*P_right
+J = max(u, 0)*P_left + min(u, 0)*P_right
 ```
 
-Each face contributes equal and opposite changes to adjacent cells. Neumann exterior faces carry zero flux; periodic faces connect opposite edges. An empty donor cannot export mass.
+The two adjacent cells receive opposite flux updates. Ecology adds separate population transports up food and water. An exterior Neumann face has zero flux; a periodic seam is an ordinary face. An empty donor cannot export mass.
 
-The original `FluxTerm.flux_fn(values, dx)` returns interior arrays `(ny,nx-1)` and `(ny-1,nx)`. A periodic custom flux supplies `periodic_flux_fn`, returning two `(ny,nx)` arrays for right and upper face fluxes. Divergence subtracts rolled incoming faces.
+## Explicit Euler and adaptive step bounds
 
-## Stability and time
+The browser and civilization/ecology Python configurations use forward Euler with safety factor `0.8` and maximum timestep `0.1`. Before each step, the runtime derives a fractional loss-rate bound `R` from the current state and takes `dt = min(0.1, 0.8/R, remaining duration)`. If `R` is zero, it uses `0.1`. This is a stability bound, not an error estimate; convergence still requires changing grid and timestep scales.
 
-Integration is forward Euler. Each term declares a bound on the fractional loss rate of its target field. Sum contributions per target, then take the largest field sum `R`.
+The ecology bound includes:
 
-| Term | Rate bound |
-| --- | --- |
-| Diffusion | `4 alpha/dx²` |
-| Attraction | Maximum per-cell sum of all outgoing face speeds divided by `dx` |
-| Population growth | `growth` |
-| Agriculture food loss | `regrowth + consumption*max(P)` |
-| Civilization food loss | Above, plus `foodCost*investment*max(P)` |
-| Infrastructure loss | `infraDecay` |
-| Soil | `soilRecovery + erosion*max(P)` |
+```text
+population: 4*dp/dx^2 + food-attraction outflow + water-attraction outflow + growth
+food:       4*df/dx^2 + consumption*max(P) + spoilage
+water:      4*dw/dx^2 + maximum local recharge/withdrawal loss rate
+soil:       maximum local (recovery coefficient + depletion coefficient)
+```
 
-Food and infrastructure attraction contribute separately. The largest speed per axis alone is unsafe: a cell can drain through opposing faces simultaneously.
+The transport contribution is the maximum sum of all outgoing face rates from one cell. A largest single-axis speed is insufficient because a cell can drain through several faces. Water, food, and soil source terms are evaluated from the pre-step state, and the same rates feed the water ledger. Changing a parameter or painting a field recomputes the next bound before evolution continues.
 
-Adaptive mode chooses `dt=min(0.1,0.8/R,remaining_duration)` before each step. Zero rates use the maximum timestep. The soil bound preserves both 0 and 1. Painting and coefficient changes precede the next rate calculation. Playback never relaxes the numerical bound.
+Legacy agriculture and chemotaxis Python demos retain their fixed-step behavior. JAX receives changing ecology timesteps as data rather than compiling one function per timestep. Browser advances are capped by a requested step count, so a slow device advances less simulated time rather than violating the bound.
 
-Legacy Python demos default to fixed steps selected from the initial state, with runtime guards detecting later violations. Civilization and the browser use adaptive stepping. This is stability-based adjustment, **not error-controlled integration**; convergence studies still require grid and timestep refinement.
+## Positivity, bounds, and diagnostics
 
-JAX receives changing timesteps as data, avoiding repeated compilation. Histories record actual simulation time. Browser batches are bounded, so slow hardware advances less simulated time rather than compromising stability.
+After each Euler update, dynamic fields are checked for finite values. Small negative round-off is floored to zero; soil, water-source quality, and derived cultivation are limited to `[0, 1]` where applicable. A correction is allowed only up to `1e-8` times the post-floor field mass plus a tiny absolute floor. A larger correction or any non-finite value stops the step. The cumulative correction is exposed as `truncatedMass`/diagnostics and should normally be zero.
 
-## Conservation and diagnostics
+Population, food, and water are stocks and are not generally conserved in ecology: harvest, consumption, spoilage, recharge, and withdrawals change their totals. Transport and diffusion alone conserve their integrals. The water snapshot reports initial stock, cumulative recharge, household withdrawal, irrigation withdrawal, water interventions, current stock, and the residual
 
-Transport conserves `sum(phi)dx²` to round-off. With reactions, total changes equal integrated sources and sinks. Population and food are not conserved in civilization runs.
+```text
+initial + recharge + water interventions
+  - household withdrawal - irrigation withdrawal - current
+```
 
-A monitored positivity floor records round-off correction. A material correction beyond `1e-8` times field mass plus a tiny absolute floor stops the run. Non-finite states are errors. Browser soil upper-bound correction is also monitored. Brushes have separate signed integrated mass accounting.
+up to floating-point round-off. This ledger distinguishes water painted directly into the stock from source-map painting. Painting `water` changes the stock and is counted as an intervention. Painting `waterSources` changes only future recharge quality and does not inject current water; its separate field intervention diagnostic still records the source-map edit. Painting `cultivation` is rejected because cultivation is derived from population.
 
 ## Reproducibility
 
-Civilization uses the same uint32 Mulberry32 stream and Gaussian initializer in both runtimes. Periodic maps use shortest wrapped distances. Legacy Python demos retain their NumPy initializer; equal seeds do not imply equal browser baseline maps.
+Ecology uses the same uint32 Mulberry32 stream and Gaussian bump initializer in Python and the browser. The legacy population, food, and fertility bump draws come first; ecology then consumes five source-map bumps with amplitudes `[0.55, 1]`, widths `[0.45, 1]`, and a zero floor. Periodic initialization uses shortest wrapped distance. Initial water is `sourceCapacity * waterSources`, and `water_overuse` scales initial population by `0.35`; `soil_recovery` starts soil at `0.25`.
 
-The browser uses `Float64Array`. Python normally uses installed JAX precision; fixture generation explicitly enables float64. Parity checks use identical arrays and timesteps, `atol=1e-9`, `rtol=1e-9`, and one-step/short trajectories under both boundaries, including soil depletion. Long nonlinear runs need not remain bit-identical across runtimes or hardware.
+The browser uses `Float64Array`; Python fixture generation enables JAX float64. Parity tests use identical arrays and timesteps with `atol=1e-9`, `rtol=1e-9`. Long nonlinear runs can diverge in their final low bits across runtimes or hardware even when the local equations and safeguards agree.
 
-Python is CPU-oriented. GPU/TPU performance, anisotropic grids, mixed edge conditions, internal walls, implicit solvers, and arbitrary browser equation editing are not implemented.
+Python is CPU-oriented. GPU/TPU performance, anisotropic grids, mixed edge conditions, internal walls, implicit solvers, and arbitrary equation editing are outside the bundled contract.

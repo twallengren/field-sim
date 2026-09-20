@@ -1,28 +1,10 @@
-import type { FieldName, Snapshot } from './contracts';
+import type { FieldDescriptor, FieldName, Snapshot, TileConfig } from './contracts';
 import type { LabElements } from './ui/lab';
-
-const FIELDS: readonly FieldName[] = ['population', 'food', 'infrastructure', 'soil', 'fertility'];
-const LABELS: Record<FieldName, string> = {
-  population: 'Population', food: 'Food', infrastructure: 'Infrastructure', soil: 'Soil', fertility: 'Fertility',
-};
-const BASE_SCALES: Record<FieldName, number> = {
-  population: 2, food: 3, infrastructure: 0.5, soil: 1, fertility: 4,
-};
-const LINE_COLORS: Record<FieldName, string> = {
-  population: '#d96139', food: '#b58b20', infrastructure: '#3c9472', soil: '#9d654c', fertility: '#6c984a',
-};
-const PALETTES: Record<FieldName, readonly [number, number, number][]> = {
-  population: [[22, 48, 43], [105, 86, 55], [210, 101, 55], [255, 218, 148]],
-  food: [[24, 48, 42], [70, 111, 76], [205, 170, 76], [255, 235, 164]],
-  infrastructure: [[19, 42, 43], [50, 92, 91], [86, 166, 137], [207, 239, 187]],
-  soil: [[49, 36, 31], [115, 70, 50], [181, 128, 82], [226, 211, 161]],
-  fertility: [[24, 49, 38], [67, 103, 57], [151, 173, 83], [230, 230, 162]],
-};
 
 export interface HistorySample {
   time: number;
   step: number;
-  totals: Record<FieldName, number>;
+  totals: Record<string, number>;
 }
 
 function formatValue(value: number): string {
@@ -57,56 +39,31 @@ function sizeCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null 
   return canvas.getContext('2d');
 }
 
-function drawHeatmap(canvas: HTMLCanvasElement, snapshot: Snapshot, field: FieldName, scale: number): void {
-  const context = sizeCanvas(canvas);
-  if (!context) return;
-  const raster = document.createElement('canvas');
-  raster.width = snapshot.n;
-  raster.height = snapshot.n;
-  const rasterContext = raster.getContext('2d');
-  if (!rasterContext) return;
-  const pixels = rasterContext.createImageData(snapshot.n, snapshot.n);
-  const values = snapshot.fields[field];
-  for (let screenRow = 0; screenRow < snapshot.n; screenRow += 1) {
-    const modelRow = snapshot.n - 1 - screenRow;
-    for (let column = 0; column < snapshot.n; column += 1) {
-      const value = values[modelRow * snapshot.n + column] / scale;
-      const [red, green, blue] = interpolate(PALETTES[field], value);
-      const target = (screenRow * snapshot.n + column) * 4;
-      pixels.data[target] = red;
-      pixels.data[target + 1] = green;
-      pixels.data[target + 2] = blue;
-      pixels.data[target + 3] = 255;
-    }
+function rasterize(snapshot: Snapshot, field: FieldDescriptor, scale: number): HTMLCanvasElement {
+  const raster = document.createElement('canvas'); raster.width = raster.height = snapshot.n;
+  const context = raster.getContext('2d')!;
+  const pixels = context.createImageData(snapshot.n, snapshot.n);
+  const values = snapshot.fields[field.key];
+  for (let row = 0; row < snapshot.n; row++) for (let column = 0; column < snapshot.n; column++) {
+    const [r,g,b] = interpolate(field.palette, values[(snapshot.n-1-row)*snapshot.n+column]/scale);
+    const target = (row*snapshot.n+column)*4;
+    pixels.data[target]=r; pixels.data[target+1]=g; pixels.data[target+2]=b; pixels.data[target+3]=255;
   }
-  rasterContext.putImageData(pixels, 0, 0);
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.imageSmoothingEnabled = true;
-  context.drawImage(raster, 0, 0, canvas.width, canvas.height);
+  context.putImageData(pixels,0,0); return raster;
 }
-
-function updateScale(canvas: HTMLCanvasElement, snapshot: Snapshot, field: FieldName, scale: number): void {
-  const scaleElement = canvas.parentElement?.querySelector<HTMLElement>('.map-scale');
-  if (!scaleElement) return;
-  const metric = snapshot.metrics[field];
-  const parts = [
-    `MIN ${formatValue(metric.min)}`,
-    `${LABELS[field].toUpperCase()} · COLOR 0–${formatValue(scale)}`,
-    `MAX ${formatValue(metric.max)}`,
-  ];
-  if (scaleElement.children.length !== 3) {
-    scaleElement.replaceChildren(...parts.map((text) => Object.assign(document.createElement('span'), { textContent: text })));
-  } else {
-    parts.forEach((text, index) => { scaleElement.children[index].textContent = text; });
-  }
-  canvas.setAttribute('aria-label', `${LABELS[field]} map. Minimum ${formatValue(metric.min)}, maximum ${formatValue(metric.max)}.`);
-}
+export interface RenderViews { getTiles(): TileConfig[]; getCanvases(): Map<string,HTMLCanvasElement>; }
 
 export class LabRenderer {
   private snapshot?: Snapshot;
   private readonly historySamples: HistorySample[] = [];
   private readonly scales = new Map<FieldName, number>();
 
+  private descriptors: FieldDescriptor[] = [];
+  private rasters = new Map<FieldName, HTMLCanvasElement>();
+  private views?: RenderViews;
+  configure(fields: FieldDescriptor[], views: RenderViews): void {
+    this.descriptors = fields; this.views = views;
+  }
   constructor(private readonly elements: LabElements) {
     this.reset();
   }
@@ -117,8 +74,9 @@ export class LabRenderer {
     this.snapshot = undefined;
     this.historySamples.length = 0;
     this.scales.clear();
-    FIELDS.forEach((field) => this.scales.set(field, BASE_SCALES[field]));
-    for (const canvas of [this.elements.primaryCanvas, this.elements.secondaryCanvas, this.elements.chartCanvas]) {
+    this.rasters.clear();
+    this.descriptors.forEach(field => this.scales.set(field.key, field.scale));
+    for (const canvas of [...(this.views?.getCanvases().values() ?? []), this.elements.chartCanvas]) {
       canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     }
     this.elements.inspect.innerHTML = '<span class="eyebrow">INSPECTED CELL</span><strong>Move over the map</strong><span>Values will appear here</span>';
@@ -126,12 +84,13 @@ export class LabRenderer {
 
   render(snapshot: Snapshot): void {
     this.snapshot = snapshot;
-    for (const field of FIELDS) {
-      const retained = this.scales.get(field) ?? BASE_SCALES[field];
-      this.scales.set(field, Math.max(retained, snapshot.metrics[field].max * 1.05));
+    this.rasters.clear();
+    for (const field of this.descriptors) {
+      const retained = this.scales.get(field.key) ?? field.scale;
+      this.scales.set(field.key, field.bounded ? field.bounded[1] : Math.max(retained, snapshot.metrics[field.key].max * 1.05));
     }
-    const totals = {} as Record<FieldName, number>;
-    FIELDS.forEach((field) => { totals[field] = snapshot.metrics[field].total; });
+    const totals: Record<string, number> = {};
+    this.descriptors.forEach(field => { totals[field.key] = snapshot.metrics[field.key].total; });
     const last = this.historySamples.at(-1);
     if (!last || last.step !== snapshot.step || last.time !== snapshot.time) {
       this.historySamples.push({ time: snapshot.time, step: snapshot.step, totals });
@@ -148,35 +107,49 @@ export class LabRenderer {
   }
 
   redraw(): void {
-    if (!this.snapshot) return;
-    const primary = this.elements.fieldSelect.value as FieldName;
-    drawHeatmap(this.elements.primaryCanvas, this.snapshot, primary, this.scales.get(primary)!);
-    updateScale(this.elements.primaryCanvas, this.snapshot, primary, this.scales.get(primary)!);
-    const comparison = this.elements.comparisonSelect.value as FieldName | '';
-    if (comparison) {
-      drawHeatmap(this.elements.secondaryCanvas, this.snapshot, comparison, this.scales.get(comparison)!);
-      updateScale(this.elements.secondaryCanvas, this.snapshot, comparison, this.scales.get(comparison)!);
+    if (!this.snapshot || !this.views) return;
+    const canvases = this.views.getCanvases();
+    const selected = new Set<FieldName>();
+    for (const tile of this.views.getTiles()) {
+      tile.layers.filter(layer => layer.visible).forEach(layer => selected.add(layer.field));
+      const canvas = canvases.get(tile.id); if (!canvas) continue;
+      const rectangle = canvas.getBoundingClientRect();
+      if (rectangle.bottom < 0 || rectangle.top > window.innerHeight || rectangle.right < 0 || rectangle.left > window.innerWidth) continue;
+      const context = sizeCanvas(canvas); if (!context) continue;
+      context.clearRect(0,0,canvas.width,canvas.height);
+      context.fillStyle = '#172d29'; context.fillRect(0,0,canvas.width,canvas.height);
+      for (const layer of tile.layers) {
+        const field = this.descriptors.find(field => field.key === layer.field); if (!field) continue;
+        const scale = this.scales.get(field.key) ?? field.scale;
+        const metric = this.snapshot.metrics[field.key];
+        const legend = canvas.closest('.field-tile')?.querySelector<HTMLElement>(`[data-field-legend="${field.key}"]`);
+        if (legend) {
+          legend.textContent = `${field.label} · color 0–${formatValue(scale)} · min ${formatValue(metric.min)} · max ${formatValue(metric.max)}`;
+          legend.style.borderLeftColor = field.color;
+          legend.style.setProperty('--field-ramp', `linear-gradient(to right, ${field.palette.map(rgb=>`rgb(${rgb.join(',')})`).join(',')})`);
+        }
+        if (!layer.visible || layer.opacity === 0) continue;
+        let raster = this.rasters.get(field.key);
+        if (!raster) { raster = rasterize(this.snapshot,field,scale); this.rasters.set(field.key,raster); }
+        context.globalAlpha = layer.opacity;
+        context.drawImage(raster,0,0,canvas.width,canvas.height);
+      }
+      context.globalAlpha = 1;
+      canvas.setAttribute('aria-label', `${tile.layers.filter(l=>l.visible).map(l=>this.descriptors.find(f=>f.key===l.field)?.label).join(' + ')} field map. Paint target: ${tile.paintField}.`);
     }
-    const legend = this.elements.primaryCanvas.closest('.map-column')?.querySelector('.legend-row');
-    const palette = PALETTES[primary];
-    const stops = [palette[0], palette[1], palette[palette.length - 1]];
-    legend?.querySelectorAll<HTMLElement>('.legend-swatch').forEach((swatch, index) => {
-      swatch.style.background = `rgb(${stops[index].join(',')})`;
-    });
-    legend?.setAttribute('aria-label', `${LABELS[primary]} color scale from 0 to ${formatValue(this.scales.get(primary)!)}`);
-    this.drawChart(primary, comparison || undefined);
+    this.drawChart([...selected]);
   }
 
-  inspectAt(clientX: number, clientY: number): void {
+  inspectAt(canvas: HTMLCanvasElement, clientX: number, clientY: number): void {
     if (!this.snapshot) return;
-    const rectangle = this.elements.primaryCanvas.getBoundingClientRect();
+    const rectangle = canvas.getBoundingClientRect();
     if (rectangle.width <= 0 || rectangle.height <= 0) return;
     const xFraction = Math.max(0, Math.min(1 - Number.EPSILON, (clientX - rectangle.left) / rectangle.width));
     const yFraction = Math.max(0, Math.min(1 - Number.EPSILON, 1 - (clientY - rectangle.top) / rectangle.height));
     const column = Math.floor(xFraction * this.snapshot.n);
     const row = Math.floor(yFraction * this.snapshot.n);
     const index = row * this.snapshot.n + column;
-    const detail = FIELDS.map((field) => `${LABELS[field]} ${formatValue(this.snapshot!.fields[field][index])}`).join(' · ');
+    const detail = this.descriptors.map(field => `${field.label} ${formatValue(this.snapshot!.fields[field.key][index])}`).join(' · ');
     this.elements.inspect.replaceChildren();
     const eyebrow = document.createElement('span'); eyebrow.className = 'eyebrow'; eyebrow.textContent = 'INSPECTED CELL';
     const title = document.createElement('strong'); title.textContent = `x ${(xFraction * 10).toFixed(2)} · y ${(yFraction * 10).toFixed(2)}`;
@@ -184,8 +157,9 @@ export class LabRenderer {
     this.elements.inspect.append(eyebrow, title, values);
   }
 
-  private drawChart(primary: FieldName, comparison?: FieldName): void {
+  private drawChart(visible: FieldName[]): void {
     const canvas = this.elements.chartCanvas;
+    canvas.style.height = `${Math.max(180, 120 + visible.length * 13)}px`;
     const context = sizeCanvas(canvas);
     if (!context) return;
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -195,8 +169,7 @@ export class LabRenderer {
     if (!this.historySamples.length) return;
     context.save();
     context.scale(ratio, ratio);
-    const visible = comparison && comparison !== primary ? [primary, comparison] : [primary];
-    const left = 38, right = width - 8, top = 34, bottom = height - 23;
+    const left = 38, right = width - 8, top = 15 + visible.length * 13, bottom = height - 23;
     const first = this.historySamples[0];
     const last = this.historySamples.at(-1)!;
     const timeSpan = last.time - first.time;
@@ -228,14 +201,14 @@ export class LabRenderer {
         const y = bottom - (sample.totals[field] / peak) * (bottom - top);
         if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
       });
-      context.strokeStyle = LINE_COLORS[field];
+      context.strokeStyle = this.descriptors.find(f=>f.key===field)!.color;
       context.lineWidth = 1.6;
       context.stroke();
-      context.fillStyle = LINE_COLORS[field];
+      context.fillStyle = this.descriptors.find(f=>f.key===field)!.color;
       context.textAlign = 'left';
-      context.fillText(`${LABELS[field]} ${formatValue(last.totals[field])}`, left, 11 + visible.indexOf(field) * 13);
+      context.fillText(`${this.descriptors.find(f=>f.key===field)!.label} ${formatValue(last.totals[field])}`, left, 11 + visible.indexOf(field) * 13);
     }
     context.restore();
-    canvas.setAttribute('aria-label', `Field totals over simulation time ${formatValue(first.time)} to ${formatValue(last.time)}. ${visible.map(field => `${LABELS[field]} ${formatValue(last.totals[field])}`).join(', ')}.`);
+    canvas.setAttribute('aria-label', `Field totals over simulation time ${formatValue(first.time)} to ${formatValue(last.time)}. ${visible.map(field => `${this.descriptors.find(f=>f.key===field)!.label} ${formatValue(last.totals[field])}`).join(', ')}.`);
   }
 }

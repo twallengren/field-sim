@@ -20,3 +20,9 @@ def get_preset(preset_id):
 def parameter_defaults():
     return {entry["key"]: float(entry["default"]) for entry in load_catalog()["parameters"]}
 
+
+def ecology_parameter_defaults():
+    return {
+        entry["key"]: float(entry["default"])
+        for entry in load_catalog()["ecologyParameters"]
+    }

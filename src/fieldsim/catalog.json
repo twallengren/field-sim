@@ -110,6 +110,27 @@
       "step": 0.005
     }
   ],
+  "ecologyParameters": [
+    { "key": "dp", "label": "Population dispersal", "default": 0.04, "min": 0, "max": 0.3, "step": 0.005 },
+    { "key": "df", "label": "Food spreading", "default": 0.06, "min": 0, "max": 0.3, "step": 0.005 },
+    { "key": "dw", "label": "Water spreading", "default": 0.12, "min": 0, "max": 0.5, "step": 0.005 },
+    { "key": "chiFood", "label": "Food attraction", "default": 0.08, "min": 0, "max": 0.8, "step": 0.01 },
+    { "key": "chiWater", "label": "Water attraction", "default": 0.12, "min": 0, "max": 0.8, "step": 0.01 },
+    { "key": "growth", "label": "Population growth", "default": 0.35, "min": 0, "max": 1, "step": 0.02 },
+    { "key": "yield", "label": "Harvest yield", "default": 0.8, "min": 0, "max": 2, "step": 0.05 },
+    { "key": "cultivationScale", "label": "Cultivation scale", "default": 0.6, "min": 0.05, "max": 3, "step": 0.05 },
+    { "key": "waterConsumption", "label": "Household water use", "default": 0.08, "min": 0, "max": 0.8, "step": 0.01 },
+    { "key": "harvestWaterCost", "label": "Irrigation cost", "default": 0.2, "min": 0, "max": 1, "step": 0.01 },
+    { "key": "consumption", "label": "Food consumption", "default": 0.18, "min": 0, "max": 0.8, "step": 0.01 },
+    { "key": "spoilage", "label": "Food spoilage", "default": 0.04, "min": 0, "max": 0.3, "step": 0.005 },
+    { "key": "foodSupport", "label": "Food needed per person", "default": 1, "min": 0.1, "max": 5, "step": 0.1 },
+    { "key": "waterSupport", "label": "Water needed per person", "default": 1, "min": 0.1, "max": 5, "step": 0.1 },
+    { "key": "replenishmentRate", "label": "Water replenishment", "default": 0.35, "min": 0, "max": 1, "step": 0.02 },
+    { "key": "sourceCapacity", "label": "Source capacity", "default": 2, "min": 0.1, "max": 5, "step": 0.1 },
+    { "key": "soilRecovery", "label": "Soil recovery", "default": 0.06, "min": 0, "max": 0.5, "step": 0.01 },
+    { "key": "erosion", "label": "Cultivation erosion", "default": 0.12, "min": 0, "max": 0.5, "step": 0.01 },
+    { "key": "settlementErosion", "label": "Settlement erosion", "default": 0.03, "min": 0, "max": 0.3, "step": 0.005 }
+  ],
   "presets": [
     {
       "id": "settlement",
@@ -250,6 +271,63 @@
         "population",
         "food"
       ],
+      "duration": 100
+    },
+    {
+      "id": "water_settlement",
+      "title": "Where water gathers",
+      "kicker": "06 / WATER & SETTLEMENT",
+      "description": "Settlements follow food and replenished water while cultivation connects both resources to the soil beneath them.",
+      "model": "ecology",
+      "parameters": {
+        "dp": 0.04, "df": 0.06, "dw": 0.12,
+        "chiFood": 0.08, "chiWater": 0.12, "growth": 0.35,
+        "yield": 0.8, "cultivationScale": 0.6,
+        "waterConsumption": 0.08, "harvestWaterCost": 0.2,
+        "consumption": 0.18, "spoilage": 0.04,
+        "foodSupport": 1, "waterSupport": 1,
+        "replenishmentRate": 0.35, "sourceCapacity": 2,
+        "soilRecovery": 0.06, "erosion": 0.12, "settlementErosion": 0.03
+      },
+      "fields": ["population", "water", "waterSources", "cultivation"],
+      "duration": 100
+    },
+    {
+      "id": "water_overuse",
+      "title": "Drawing down the source",
+      "kicker": "07 / WATER OVERUSE",
+      "description": "Heavy household and irrigation demand can outrun slow replenishment and shrink the food and population the landscape supports.",
+      "model": "ecology",
+      "parameters": {
+        "dp": 0.04, "df": 0.06, "dw": 0.12,
+        "chiFood": 0.08, "chiWater": 0.12, "growth": 0.35,
+        "yield": 0.8, "cultivationScale": 0.6,
+        "waterConsumption": 0.25, "harvestWaterCost": 0.45,
+        "consumption": 0.18, "spoilage": 0.04,
+        "foodSupport": 1, "waterSupport": 1,
+        "replenishmentRate": 0.12, "sourceCapacity": 2,
+        "soilRecovery": 0.06, "erosion": 0.16, "settlementErosion": 0.03
+      },
+      "fields": ["water", "population", "food", "soil"],
+      "duration": 100
+    },
+    {
+      "id": "soil_recovery",
+      "title": "Leaving land fallow",
+      "kicker": "08 / SOIL RECOVERY",
+      "description": "Watered soil recovers fastest where cultivation and settlement pressure retreat, allowing future harvests to return.",
+      "model": "ecology",
+      "parameters": {
+        "dp": 0.04, "df": 0.06, "dw": 0.12,
+        "chiFood": 0.08, "chiWater": 0.12, "growth": 0.35,
+        "yield": 0.8, "cultivationScale": 0.6,
+        "waterConsumption": 0.1, "harvestWaterCost": 0.25,
+        "consumption": 0.18, "spoilage": 0.04,
+        "foodSupport": 1, "waterSupport": 1,
+        "replenishmentRate": 0.3, "sourceCapacity": 2,
+        "soilRecovery": 0.18, "erosion": 0.06, "settlementErosion": 0.015
+      },
+      "fields": ["soil", "cultivation", "food", "water"],
       "duration": 100
     }
   ]

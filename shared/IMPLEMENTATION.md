@@ -1,19 +1,49 @@
 # Shared implementation contract
 
-Primary owns this contract, `web/src/contracts.ts`, `web/src/catalog.ts`, and `src/fieldsim/catalog.json`. Request changes rather than editing them concurrently.
+This file describes the Python/browser agreement. The catalog, TypeScript contracts, and worker are executable parts of the same contract; update them together when an interface changes.
 
-Domain length 10; cell centers `(i+0.5)*10/n`; row-major arrays, y increases upward. All new civilization variables are dimensionless. Epsilon, food half saturation, and infrastructure half saturation are in the catalog.
+## Domain, arrays, and initialization
 
-Civilization equations: P diffusion dp, donor-cell transport up food with chiFood and infrastructure with chiInfra, growth `growth*P*(F-P)/(F+P+1e-6)`. Build B=`investment*P*F/(1+F)`. F diffusion df plus `regrowth*(K*S*(1+infraBoost*I/(1+I))-F)-consumption*P*F-foodCost*B`. I source B-infraDecay*I. S source soilRecovery*(1-S)-erosion*P*S. K static. Soil and infrastructure have no diffusion.
+The domain is a square of side `L = 10`. Cell centers are `(i + 0.5)L/n`; flattened arrays are row-major with y increasing upward in the field model. Browser ecology resolutions are 32, 64, and 128. Ecology values and time are dimensionless.
 
-Separate population fluxes for food and infrastructure; sum their outgoing-rate bounds. Food destruction bound regrowth+consumption*max(P)+foodCost*investment*max(P) (half saturation is 1). Infrastructure bound infraDecay. Soil bound soilRecovery+erosion*max(P), which preserves both bounds [0,1]. Population bound growth plus diffusion and both transport rates. Safety 0.8, maximum dt 0.1, cap at remaining requested duration; zero rates use max dt. New adaptive APIs are optional; existing fixed-step Python behavior remains.
+Both runtimes use the uint32 Mulberry32 stream. Each bump consumes five draws: x, y, amplitude, sigma, then one reserved draw. Population, food, and fertility use the legacy sequences and ranges. Ecology then draws five source bumps with amplitude `[0.55, 1]`, sigma `[0.45, 1]`, and zero floor, clips `waterSources` to `[0, 1]`, and initializes `water = sourceCapacity * waterSources`. `water_overuse` scales initial population by `0.35`; `soil_recovery` initializes soil to `0.25`; all other ecology soil starts at `1`. Periodic maps use shortest wrapped distances. `cultivation = population/(population + cultivationScale)` is derived after initialization and after every population or parameter change.
 
-Browser baseline agriculture uses P/F/K equations and parameters matching legacy Python; chemotaxis disables all reactions. In browser all five fields exist; I=0 and S=1 remain static for baselines. Python baseline parity fixtures need only P/F/K; do not change original NumPy RNG behavior.
+Ecology fields are `population`, `food`, `water`, and `soil` (dynamic), `fertility` and `waterSources` (static but paintable), and `cultivation` (derived and read-only). Civilization fields remain population, food, infrastructure, soil, and fertility. The browser field descriptors expose kind, editability, palette, and optional bounds.
 
-New deterministic initializer (all browser demos and Python civilization): Mulberry32 uint32 PRNG, seed coerced to uint32. Each random draw: state += 0x6D2B79F5 mod 2^32; t=imul(state xor state>>>15,state|1); t ^= t+imul(t xor t>>>7,t|61); return ((t xor t>>>14)>>>0)/4294967296. Generate bump lists sequentially P then F then K. Each bump consumes five draws: x=L*r, y=L*r, amplitude=lo+(hi-lo)*r, sigma=lo+(hi-lo)*r, and consume one unused draw (reserved). P: 6 bumps amplitude [0.4,1.2], sigma [0.3,0.8], floor .05. F: 8 bumps amplitude [.5,1.5], sigma [.5,1.2], floor .2. K: 8 bumps amplitude [.5,1.5], sigma [.6,1.5], floor .25. Gaussian amp*exp(-(dx^2+dy^2)/(2*sigma^2)); periodic uses shortest wrapped displacement. I=0; S=1.
+## Equations and stepping
 
-Browser engine public class `Simulation` in `web/src/engine/simulation.ts`: constructor(setup: Setup, initialFields?: Fields); step(dtOverride?: number): void; advance(duration: number, maxSteps: number): void; setParameters(parameters: Parameters): void; paint(brush: Brush): void; snapshot(): Snapshot. Optional dtOverride is for parity/tests and must reject unsafe values. Fields exposed through snapshots are copies. Worker entry `web/src/engine/worker.ts` implements contracts. advance does bounded work; caller uses actual snapshot time, never assumes full duration reached.
+Ecology uses population diffusion and donor-cell attraction up food and water; food and water also diffuse. Its local rates are:
 
-Python agent owns `scripts/generate_reference.py` and `web/tests/fixtures/reference.json`: generate float64 cases n=8 each model and boundary, include `setup`, `fields` (initial flattened relevant arrays), `dt` (safe fixed value), `steps`, `expected` (final arrays). Top level `{version:1,cases:[...]}`. Browser test injects fields over initializer defaults and compares with atol=1e-9 rtol=1e-9. Include one-step and 20-step cases. Initializer parity also covered for civilization. Never regenerate expected data from browser implementation.
+```text
+C = P/(P + cultivationScale), h = W/(1 + W)
+H = yield*C*K*S*h
+R = replenishmentRate*Q*max(1 - W/sourceCapacity, 0)
+D = waterConsumption*P*h, A = harvestWaterCost*H
+U = consumption*P*F/(1 + F), L = spoilage*F
+T = min(F/foodSupport, W/waterSupport)
+G = growth*P*(T-P)/(T+P+1e-6)
+```
 
-UI agent builds components in `web/src/ui/` and `web/src/styles.css`, exports `createLab(root, callbacks)` from `web/src/ui/lab.ts`. Returns `{elements, setSetup(setup), setSnapshot(snapshot), setPlaying(boolean), setStatus(message,isError?), destroy()}`. `elements` contains primary canvas, secondary canvas, field select, comparison select (empty means none), brush field select, brush radius input, brush strength input, brush mode select (add/remove), chart canvas, inspect element. Callbacks: onPreset(id), onSetup(patch: Partial<Setup>), onParameters(parameters), onPlay(), onStep(), onReset(), onShare(), onSpeed(speed). UI exports its `Lab` type. Worker/state/canvas rendering/pointer wiring is integration agent ownership. UI setSnapshot updates numeric metrics only; charts/rendering integration owns. Main entry `web/src/main.ts` is integration ownership.
+The source equations are `F' = H-U-L`, `W' = R-D-A`, and `S' = soilRecovery*h*(1-C)*(1-P/(1+P))*(1-S) - (erosion*C + settlementErosion*P/(1+P))*S`; population adds `G` to its diffusion and transport RHS. `K` and `Q` are static. `sourceCapacity` is the recharge target rather than a hard upper bound on water stock. All RHS terms in one Euler step read the old state.
+
+Explicit Euler uses safety `0.8`, maximum `dt = 0.1`, and `dt = min(0.1, 0.8/R, remaining)` for the current combined rate bound, with `0.1` when `R = 0`. Ecology bounds population diffusion plus both outgoing transport rates and growth; food diffusion plus consumption and spoilage; water diffusion plus its maximum local recharge/withdrawal loss rate; and soil by local recovery plus depletion coefficients. A requested timestep above the safe bound is rejected.
+
+After each step, dynamic fields must be finite, non-negative, and soil must remain in `[0, 1]`. Corrections are permitted only below `1e-8 * postFloorMass + 1e-30`; larger corrections abort the step. Snapshots copy arrays and expose cumulative correction and intervention diagnostics.
+
+## Water accounting and interventions
+
+The browser ecology snapshot reports `initial`, `recharged`, `domesticUse`, `agriculturalUse`, `interventions`, `current`, and `residual`. The residual is `initial + recharged + interventions - domesticUse - agriculturalUse - current` and should be round-off. Direct water painting changes the stock and increments `interventions`; source-map painting changes only future recharge and does not inject water. Cultivation painting is rejected.
+
+## Browser engine and worker
+
+`Simulation` in `web/src/engine/simulation.ts` exposes `constructor(setup, initialFields?)`, `step(dtOverride?)`, `advance(duration, maxSteps)`, `setParameters(parameters)`, `paint(brush)`, `snapshot()`, and `rateBound(...)`. A supplied timestep is accepted only when finite, positive, and within the current safe bound. Snapshots contain detached field arrays. `advance` may stop at `maxSteps`; callers use returned simulation time rather than assuming the requested duration was reached. The worker serializes `init`, `advance`, `step`, `parameters`, and `paint` commands and ignores stale generations.
+
+## Tiles, rendering, and sharing
+
+A `TileConfig` has a stable ID, ordered unique `layers`, and one `paintField` selected from those layers. A layer stores `field`, `opacity`, and `visible`. The UI permits any number of tiles; a one-layer tile selects that layer automatically. Derived fields can be rendered and selected in a tile, but a paint attempt is rejected because the field is read-only. The renderer keeps one color scale per field key, so repeated fields share a scale, and it records one history series per unique visible field. Layer order controls compositing order; visibility controls both rendering and history selection.
+
+Version 2 setup serialization contains preset, seed, resolution, boundary, the complete model parameter map, and tile layout. It excludes evolved arrays, time, brush interventions, water ledger history, speed, and chart history. Version 1 setup links remain valid for the original non-ecology presets; ecology setup links require version 2. Malformed links fall back to safe defaults with an explanatory status.
+
+## Ownership and parity
+
+The Python model and reference fixtures own the numerical reference. The browser engine owns the registered TypeScript implementation and worker protocol. UI owns controls and tile editing; rendering owns raster maps, shared scales, and history. Integration owns generation changes, worker messaging, pointer painting, and setup-link actions. Parity fixtures are generated from Python, never from browser output, and compare identical arrays/timesteps under both boundaries at `atol=1e-9`, `rtol=1e-9`.

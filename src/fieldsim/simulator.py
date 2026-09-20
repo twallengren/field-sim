@@ -77,7 +77,8 @@ class Simulator:
     def __init__(self, fields: dict, lagrangian, sources: list, flux_terms: list,
                  dt: float = None, check_every: int = 25,
                  truncation_tolerance: float = 1e-8, adaptive: bool = False,
-                 safety: float = 0.8, max_dt: float = 0.1):
+                 safety: float = 0.8, max_dt: float = 0.1,
+                 derived_fields=None):
         """
         Args:
             fields: dict of {field_name: Field}. All fields must share one shape
@@ -139,6 +140,10 @@ class Simulator:
         self.adaptive = bool(adaptive)
         self.safety = float(safety)
         self.max_dt = float(max_dt)
+        self.derived_fields = dict(derived_fields or {})
+        overlap = set(self.derived_fields) & set(fields)
+        if overlap:
+            raise ValueError(f"Derived fields duplicate stored fields: {sorted(overlap)}.")
         self.dt = float(dt) if dt is not None else self.max_dt
         self.check_every = check_every
         self.truncation_tolerance = float(truncation_tolerance)
@@ -445,4 +450,6 @@ class Simulator:
         return total
 
     def get_state(self):
-        return {name: field.get_values() for name, field in self.fields.items()}
+        state = {name: field.get_values() for name, field in self.fields.items()}
+        state.update({name: derive(state) for name, derive in self.derived_fields.items()})
+        return state

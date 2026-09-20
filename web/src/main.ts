@@ -1,10 +1,11 @@
 import './styles.css';
 
-import { defaultSetup, getPreset } from './catalog';
+import { defaultSetup, defaultTiles, getFieldDescriptors, getPreset } from './catalog';
 import type { Brush, FieldName, Parameters, Setup, Snapshot, WorkerCommand, WorkerResponse } from './contracts';
 import { LabRenderer } from './rendering';
 import { loadSetupFragment, serializeSetupFragment, validateSharedSetup } from './setup';
 import { createLab } from './ui/lab';
+import { createTileGrid } from './ui/tiles';
 
 const root = document.querySelector<HTMLElement>('#app');
 if (!root) throw new Error('The application root is missing.');
@@ -31,15 +32,7 @@ const lab = createLab(root, {
     presetSetup.n = setup.n;
     presetSetup.boundary = setup.boundary;
     const preset = getPreset(id);
-    const clearComparison = lab.elements.comparisonSelect.value
-      && !preset.fields.includes(lab.elements.comparisonSelect.value as FieldName);
     beginGeneration(presetSetup, `${preset.title} loaded. Paused at its initial state.`);
-    lab.elements.fieldSelect.value = preset.fields[0];
-    lab.elements.fieldSelect.dispatchEvent(new Event('change'));
-    if (clearComparison) {
-      lab.elements.comparisonSelect.value = '';
-      lab.elements.comparisonSelect.dispatchEvent(new Event('change'));
-    }
   },
   onSetup(patch) {
     const replacement = validateSharedSetup({ ...setup, ...patch });
@@ -88,6 +81,14 @@ const lab = createLab(root, {
   },
 });
 const renderer = new LabRenderer(lab.elements);
+const grid = createTileGrid(lab.elements.tileContainer, getFieldDescriptors(getPreset(setup.preset).model), setup.tiles ?? defaultTiles(getPreset(setup.preset).model), {
+  onChange(tiles) {
+    setup = {...setup, version:2, tiles};
+    renderer.redraw();
+  },
+  onCanvas(canvas, tileId) { bindCanvas(canvas,tileId); },
+});
+renderer.configure(getFieldDescriptors(getPreset(setup.preset).model),grid);
 
 function cloneParameters(parameters: Parameters): Parameters {
   return { ...parameters };
@@ -112,6 +113,7 @@ function beginGeneration(replacement: Setup, message: string): void {
     ...replacement,
     parameters: cloneParameters(replacement.parameters),
   };
+  painting = false; lastPaint = undefined; activeCanvas = undefined; activePointerId = undefined;
   generation += 1;
   snapshot = undefined;
   commandResponses = [];
@@ -119,6 +121,10 @@ function beginGeneration(replacement: Setup, message: string): void {
   startupMessage = message;
   startupIsError = false;
   setPlaying(false);
+  const model = getPreset(setup.preset).model;
+  grid.setFields(getFieldDescriptors(model));
+  grid.setTiles(setup.tiles ?? defaultTiles(model));
+  renderer.configure(getFieldDescriptors(model), grid);
   renderer.reset();
   lab.setSetup(setup);
   lab.setStatus('Preparing the field…');
@@ -180,14 +186,14 @@ worker.addEventListener('error', (event) => {
   lab.setStatus(`The simulation worker stopped: ${event.message || 'unknown worker error'}. Reload this page to reconnect.`, true);
 });
 
-lab.elements.fieldSelect.addEventListener('change', () => renderer.redraw());
-lab.elements.comparisonSelect.addEventListener('change', () => renderer.redraw());
-
 let painting = false;
+let strokeField: FieldName = 'population';
+let activeCanvas: HTMLCanvasElement | undefined;
+let activePointerId: number | undefined;
 let lastPaint: { x: number; y: number } | undefined;
 
-function canvasFractions(event: PointerEvent): { x: number; y: number } | undefined {
-  const rectangle = lab.elements.primaryCanvas.getBoundingClientRect();
+function canvasFractions(canvas: HTMLCanvasElement, event: PointerEvent): { x: number; y: number } | undefined {
+  const rectangle = canvas.getBoundingClientRect();
   if (rectangle.width <= 0 || rectangle.height <= 0) return undefined;
   return {
     x: Math.max(0, Math.min(1, (event.clientX - rectangle.left) / rectangle.width)),
@@ -200,7 +206,7 @@ function paintAt(point: { x: number; y: number }): void {
   const strength = Number(lab.elements.brushStrength.value);
   const sign = lab.elements.brushMode.value === 'remove' ? -1 : 1;
   const brush: Brush = {
-    field: lab.elements.brushFieldSelect.value as FieldName,
+    field: strokeField,
     x: point.x,
     y: point.y,
     radius,
@@ -227,39 +233,47 @@ function continueStroke(point: { x: number; y: number }): void {
   lastPaint = point;
 }
 
-lab.elements.primaryCanvas.style.touchAction = 'none';
-lab.elements.primaryCanvas.addEventListener('pointerdown', (event) => {
-  if (event.pointerType === 'mouse' && event.button !== 0) return;
-  const point = canvasFractions(event);
-  if (!point || !snapshot) return;
-  event.preventDefault();
-  setPlaying(false);
-  lab.setStatus('Paused for field intervention. Press Run to continue.');
-  painting = true;
-  lastPaint = undefined;
-  lab.elements.primaryCanvas.setPointerCapture(event.pointerId);
-  continueStroke(point);
+function bindCanvas(canvas: HTMLCanvasElement, tileId: string): void {
+  canvas.style.touchAction = 'none';
+  canvas.addEventListener('pointerdown', event => {
+    if ((event.pointerType === 'mouse' && event.button !== 0) || painting) return;
+    const tile = grid.getTiles().find(tile => tile.id === tileId);
+    if (!tile || !snapshot) return;
+    const field = getFieldDescriptors(getPreset(setup.preset).model).find(field => field.key === tile.paintField);
+    if (!field?.editable) { lab.setStatus('Cultivation is derived from population and cannot be painted.'); return; }
+    const point = canvasFractions(canvas,event); if (!point) return;
+    event.preventDefault(); setPlaying(false);
+    strokeField = tile.paintField; activeCanvas = canvas; activePointerId = event.pointerId;
+    lab.setStatus(`Paused for intervention: painting ${field.label.toLowerCase()}. Press Run to continue.`);
+    painting = true; lastPaint = undefined;
+    canvas.setPointerCapture(event.pointerId); continueStroke(point);
+  });
+  canvas.addEventListener('pointermove', event => {
+    renderer.inspectAt(canvas,event.clientX,event.clientY);
+    if (!painting || activeCanvas !== canvas || activePointerId !== event.pointerId) return;
+    const coalesced = event.getCoalescedEvents?.();
+    for (const sample of coalesced?.length ? coalesced : [event]) {
+      const point = canvasFractions(canvas,sample); if (point) continueStroke(point);
+    }
+  });
+  const endStroke = (event: PointerEvent): void => {
+    if (!painting || activeCanvas !== canvas || activePointerId !== event.pointerId) return;
+    if (event.type === 'pointerup') {
+      const point = canvasFractions(canvas,event); if (point) continueStroke(point);
+    }
+    painting = false; lastPaint = undefined; activeCanvas = undefined; activePointerId = undefined;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  };
+  canvas.addEventListener('pointerup',endStroke);
+  canvas.addEventListener('pointercancel',endStroke);
+  canvas.addEventListener('lostpointercapture',endStroke);
+}
+
+window.addEventListener('hashchange', () => {
+  const incoming = loadSetupFragment(window.location.hash);
+  beginGeneration(incoming.setup, incoming.message ?? 'Shared setup loaded. Paused at its initial state.');
+  startupIsError = Boolean(incoming.message);
 });
-lab.elements.primaryCanvas.addEventListener('pointermove', (event) => {
-  renderer.inspectAt(event.clientX, event.clientY);
-  if (!painting) return;
-  const coalesced = event.getCoalescedEvents?.();
-  const events = coalesced?.length ? coalesced : [event];
-  for (const sample of events) {
-    const point = canvasFractions(sample);
-    if (point) continueStroke(point);
-  }
-});
-const endStroke = (event: PointerEvent): void => {
-  if (!painting) return;
-  const point = canvasFractions(event);
-  if (point) continueStroke(point);
-  painting = false;
-  lastPaint = undefined;
-  if (lab.elements.primaryCanvas.hasPointerCapture(event.pointerId)) lab.elements.primaryCanvas.releasePointerCapture(event.pointerId);
-};
-lab.elements.primaryCanvas.addEventListener('pointerup', endStroke);
-lab.elements.primaryCanvas.addEventListener('pointercancel', endStroke);
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && playing) {
@@ -269,13 +283,14 @@ document.addEventListener('visibilitychange', () => {
 });
 
 const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => renderer.redraw());
-resizeObserver?.observe(lab.elements.primaryCanvas);
-resizeObserver?.observe(lab.elements.secondaryCanvas);
+resizeObserver?.observe(lab.elements.tileContainer);
+window.addEventListener('scroll', () => renderer.redraw(), {passive:true});
+window.addEventListener('resize', () => renderer.redraw());
 resizeObserver?.observe(lab.elements.chartCanvas);
 
 async function shareSetup(): Promise<void> {
   const url = new URL(window.location.href);
-  url.hash = serializeSetupFragment(setup);
+  url.hash = serializeSetupFragment({...setup,version:2,tiles:grid.getTiles()});
   const text = url.toString();
   let copied = false;
   try {
@@ -300,7 +315,7 @@ async function shareSetup(): Promise<void> {
   }
 
   if (copied) {
-    lab.setStatus('Setup link copied. It includes setup and parameters only; painted interventions and evolved state are excluded.');
+    lab.setStatus('Setup link copied. It includes setup, parameters, and view layout; painted interventions and evolved state are excluded.');
     return;
   }
   lab.setStatus('Clipboard access is unavailable. Select and copy this setup link:');

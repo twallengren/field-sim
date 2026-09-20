@@ -27,7 +27,7 @@ describe('shared setup links', () => {
   });
 
   it.each([
-    ['version', { version: 2 }],
+    ['version', { version: 3 }],
     ['preset', { preset: 'not-a-preset' }],
     ['seed', { seed: -1 }],
     ['resolution', { n: 48 }],
@@ -59,5 +59,26 @@ describe('shared setup links', () => {
     const validated = validateSharedSetup(setup)!;
     setup.parameters.dp = 0.2;
     expect(validated.parameters.dp).not.toBe(0.2);
+  });
+});
+
+describe('version 2 field views', () => {
+  it('round-trips arbitrary tiles and overlays without evolved state', () => {
+    const setup = defaultSetup('water_settlement');
+    setup.tiles = Array.from({length:12}, (_,index) => ({id:`tile-${index}`, layers:[{field:'water' as const,opacity:1,visible:true},{field:'population' as const,opacity:0.4,visible:true}],paintField:'population' as const}));
+    expect(loadSetupFragment(serializeSetupFragment(setup)).setup).toEqual(setup);
+  });
+  it('keeps legacy setup meanings when adding views', () => {
+    const legacy = defaultSetup('overshoot');
+    const upgraded = {...legacy,version:2 as const,tiles:[{id:'one',layers:[{field:'population' as const,opacity:1,visible:true}],paintField:'population' as const}]};
+    expect(validateSharedSetup(upgraded)?.parameters).toEqual(legacy.parameters);
+    expect(validateSharedSetup(legacy)).toEqual(legacy);
+  });
+  it('rejects unavailable fields, duplicate IDs, bad opacity, and invalid paint targets', () => {
+    const setup = defaultSetup('water_settlement');
+    const tile = {id:'one',layers:[{field:'water',opacity:1,visible:true}],paintField:'water'};
+    for (const tiles of [[],[tile,tile],[{...tile,layers:[{field:'infrastructure',opacity:1,visible:true}]}],[{...tile,layers:[{field:'water',opacity:2,visible:true}]}],[{...tile,paintField:'population'}]]) {
+      expect(validateSharedSetup({...setup,tiles})).toBeUndefined();
+    }
   });
 });
