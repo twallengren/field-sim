@@ -2,12 +2,16 @@ import argparse
 import sys
 
 from fieldsim.simulation_runner import SimulationRunner
-from fieldsim.utils.constants import FOOD, POPULATION
+from fieldsim.utils.constants import FOOD, INFRASTRUCTURE, POPULATION, SOIL
 
 #: Registry of bundled simulations: name -> (get_config, field names to plot).
 _SIMULATIONS = {
     "agriculture": ("fieldsim.simulations.agriculture", [POPULATION, FOOD]),
     "chemotaxis_demo": ("fieldsim.simulations.chemotaxis_demo", [POPULATION, FOOD]),
+    "civilization": (
+        "fieldsim.simulations.civilization",
+        [POPULATION, FOOD, INFRASTRUCTURE, SOIL],
+    ),
 }
 
 
@@ -29,6 +33,22 @@ def build_parser():
         help="Which bundled simulation to run (default: agriculture).",
     )
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for initial-condition generation.")
+    parser.add_argument(
+        "--resolution", "--n", dest="resolution", type=int, default=None,
+        help="Number of cells along each domain edge.",
+    )
+    parser.add_argument(
+        "--boundary", choices=("neumann", "periodic"), default="neumann",
+        help="Boundary condition for diffusion and transport.",
+    )
+    parser.add_argument(
+        "--preset", default=None,
+        help="Civilization catalog preset (default: settlement).",
+    )
+    parser.add_argument(
+        "--param", action="append", default=[], metavar="KEY=VALUE",
+        help="Override a civilization parameter; may be repeated.",
+    )
     parser.add_argument(
         "--years", type=float, default=None,
         help="Override the simulation's total_time (in years); default is the config's own default.",
@@ -52,7 +72,8 @@ def build_parser():
 def _print_summary(runner):
     print(f"simulation: {runner.config.name}")
     print(f"steps: {runner.steps}")
-    print(f"dt: {runner.dt:.6g}")
+    print(f"dt: {runner.simulator.dt:.6g}")
+    print(f"simulated time: {runner.simulator.time:.6g}")
     print(f"frames recorded: {len(runner.history)} (stride={runner.stride})")
 
     # Read the final state straight from the simulator's own device arrays
@@ -86,9 +107,25 @@ def main(argv=None):
     get_config = _get_config_fn(args.sim)
     _, field_names = _SIMULATIONS[args.sim]
 
-    config_kwargs = {"seed": args.seed}
+    config_kwargs = {"seed": args.seed, "bc_type": args.boundary}
+    if args.resolution is not None:
+        config_kwargs["n"] = args.resolution
     if args.years is not None:
         config_kwargs["total_time"] = args.years
+    if args.sim == "civilization":
+        if args.preset is not None:
+            config_kwargs["preset"] = args.preset
+        parameters = {}
+        for item in args.param:
+            try:
+                key, raw_value = item.split("=", 1)
+                parameters[key] = float(raw_value)
+            except (ValueError, TypeError):
+                parser.error(f"--param must be KEY=VALUE, got {item!r}")
+        if parameters:
+            config_kwargs["parameters"] = parameters
+    elif args.preset is not None or args.param:
+        parser.error("--preset and --param are only valid with --sim civilization")
     cfg = get_config(**config_kwargs)
 
     runner = SimulationRunner(cfg, max_frames=args.max_frames)

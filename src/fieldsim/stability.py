@@ -66,7 +66,12 @@ def rate_contributions(fields_or_values, lagrangian_terms, flux_terms, sources, 
             raise ValueError(
                 f"Term {term.name!r} reported a non-finite/negative max_rate {rate!r}."
             )
-        per_field[term.target] = per_field.get(term.target, 0.0) + rate
+        combined = per_field.get(term.target, 0.0) + rate
+        if not math.isfinite(combined):
+            raise ValueError(
+                f"Summed max_rate for field {term.target!r} is non-finite."
+            )
+        per_field[term.target] = combined
     return per_field
 
 

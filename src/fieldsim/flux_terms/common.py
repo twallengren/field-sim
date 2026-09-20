@@ -38,7 +38,8 @@ class AdvectionAlongGradientFlux(FluxTerm):
       velocity points out of it, so its fractional loss in one step is
       ``dt * (u_R^+ + u_L^- + v_U^+ + v_D^-)/dx``, where ``x^+ = max(x, 0)``,
       ``x^- = max(-x, 0)`` and the four terms are its right/left/upper/lower
-      faces (boundary faces are zero).  The condition that no cell can be
+      faces (boundary faces are zero for Neumann and wrap for periodic). The
+      condition that no cell can be
       drained below zero is therefore
 
           ``dt * max_cell[(u_R^+ + u_L^- + v_U^+ + v_D^-)/dx] <= 1``
@@ -53,20 +54,33 @@ class AdvectionAlongGradientFlux(FluxTerm):
       than ``(max|u| + max|v|)/dx`` (the two maxima need not occur in the same
       cell), so the tight rate also buys a larger timestep.
 
-    Mass conservation is inherited from :meth:`FluxTerm.divergence` (telescoping
-    face differences with zero boundary faces).
+    Mass conservation is inherited from :meth:`FluxTerm.divergence`: both the
+    zero-boundary and wrap-around face differences telescope.
     """
 
-    def __init__(self, target_field, gradient_field, kappa=1.0):
+    def __init__(self, target_field, gradient_field, kappa=1.0,
+                 bc_type="neumann"):
         self.target_field = target_field
         self.gradient_field = gradient_field
         self.kappa = kappa
+        self.bc_type = bc_type
+        if bc_type not in ("neumann", "periodic"):
+            raise ValueError(f"Unsupported boundary condition {bc_type!r}.")
 
         def flux_fn(values, dx):
             P = values[target_field]
             u, v = _face_velocities(values[gradient_field], kappa, dx)
             Jx = jnp.maximum(u, 0.0) * P[:, :-1] + jnp.minimum(u, 0.0) * P[:, 1:]
             Jy = jnp.maximum(v, 0.0) * P[:-1, :] + jnp.minimum(v, 0.0) * P[1:, :]
+            return Jx, Jy
+
+        def periodic_flux_fn(values, dx):
+            P = values[target_field]
+            F = values[gradient_field]
+            u = kappa * (jnp.roll(F, -1, axis=1) - F) / dx
+            v = kappa * (jnp.roll(F, -1, axis=0) - F) / dx
+            Jx = jnp.maximum(u, 0.0) * P + jnp.minimum(u, 0.0) * jnp.roll(P, -1, axis=1)
+            Jy = jnp.maximum(v, 0.0) * P + jnp.minimum(v, 0.0) * jnp.roll(P, -1, axis=0)
             return Jx, Jy
 
         def max_rate_fn(values, dx):
@@ -79,15 +93,26 @@ class AdvectionAlongGradientFlux(FluxTerm):
             # kappa < 0) and both faces of an axis drain the same cell.
             # Zero-padding to the domain boundary encodes the zero-flux BC, so
             # boundary faces contribute no outflow, exactly as in flux_fn.
-            u, v = _face_velocities(values[gradient_field], kappa, dx)
-            up = jnp.pad(u, ((0, 0), (1, 1)))
-            vp = jnp.pad(v, ((1, 1), (0, 0)))
-            outflow = (
-                jnp.maximum(up[:, 1:], 0.0)      # through the right face
-                + jnp.maximum(-up[:, :-1], 0.0)  # through the left face
-                + jnp.maximum(vp[1:, :], 0.0)    # through the upper face
-                + jnp.maximum(-vp[:-1, :], 0.0)  # through the lower face
-            ) / dx
+            if bc_type == "periodic":
+                F = values[gradient_field]
+                u = kappa * (jnp.roll(F, -1, axis=1) - F) / dx
+                v = kappa * (jnp.roll(F, -1, axis=0) - F) / dx
+                outflow = (
+                    jnp.maximum(u, 0.0)
+                    + jnp.maximum(-jnp.roll(u, 1, axis=1), 0.0)
+                    + jnp.maximum(v, 0.0)
+                    + jnp.maximum(-jnp.roll(v, 1, axis=0), 0.0)
+                ) / dx
+            else:
+                u, v = _face_velocities(values[gradient_field], kappa, dx)
+                up = jnp.pad(u, ((0, 0), (1, 1)))
+                vp = jnp.pad(v, ((1, 1), (0, 0)))
+                outflow = (
+                    jnp.maximum(up[:, 1:], 0.0)
+                    + jnp.maximum(-up[:, :-1], 0.0)
+                    + jnp.maximum(vp[1:, :], 0.0)
+                    + jnp.maximum(-vp[:-1, :], 0.0)
+                ) / dx
             if not outflow.size:
                 return 0.0
             return float(jnp.max(outflow))
@@ -97,8 +122,16 @@ class AdvectionAlongGradientFlux(FluxTerm):
             target=target_field,
             flux_fn=flux_fn,
             max_rate_fn=max_rate_fn,
+            bc_type=bc_type,
+            periodic_flux_fn=periodic_flux_fn if bc_type == "periodic" else None,
         )
 
     def face_velocities(self, values: dict, dx: float):
         """Signed interior-face velocities ``(u, v)`` for the current state."""
+        if self.bc_type == "periodic":
+            F = values[self.gradient_field]
+            return (
+                self.kappa * (jnp.roll(F, -1, axis=1) - F) / dx,
+                self.kappa * (jnp.roll(F, -1, axis=0) - F) / dx,
+            )
         return _face_velocities(values[self.gradient_field], self.kappa, dx)

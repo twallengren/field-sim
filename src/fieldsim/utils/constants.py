@@ -1,3 +1,5 @@
 POPULATION = "population"
 FOOD = "food"
 FERTILITY = "fertility"
+INFRASTRUCTURE = "infrastructure"
+SOIL = "soil"

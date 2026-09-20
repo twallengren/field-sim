@@ -1,0 +1,256 @@
+{
+  "version": 1,
+  "domainLength": 10,
+  "epsilon": 1e-06,
+  "foodHalfSaturation": 1,
+  "infrastructureHalfSaturation": 1,
+  "parameters": [
+    {
+      "key": "dp",
+      "label": "Population dispersal",
+      "default": 0.05,
+      "min": 0,
+      "max": 0.3,
+      "step": 0.005
+    },
+    {
+      "key": "df",
+      "label": "Food spreading",
+      "default": 0.08,
+      "min": 0,
+      "max": 0.3,
+      "step": 0.005
+    },
+    {
+      "key": "chiFood",
+      "label": "Food attraction",
+      "default": 0.12,
+      "min": 0,
+      "max": 0.8,
+      "step": 0.01
+    },
+    {
+      "key": "chiInfra",
+      "label": "Infrastructure attraction",
+      "default": 0.08,
+      "min": 0,
+      "max": 0.5,
+      "step": 0.01
+    },
+    {
+      "key": "growth",
+      "label": "Population growth",
+      "default": 0.4,
+      "min": 0,
+      "max": 1,
+      "step": 0.02
+    },
+    {
+      "key": "regrowth",
+      "label": "Food renewal",
+      "default": 0.35,
+      "min": 0,
+      "max": 1,
+      "step": 0.02
+    },
+    {
+      "key": "consumption",
+      "label": "Food consumption",
+      "default": 0.15,
+      "min": 0,
+      "max": 0.8,
+      "step": 0.01
+    },
+    {
+      "key": "investment",
+      "label": "Construction rate",
+      "default": 0.12,
+      "min": 0,
+      "max": 0.5,
+      "step": 0.01
+    },
+    {
+      "key": "infraDecay",
+      "label": "Infrastructure decay",
+      "default": 0.025,
+      "min": 0,
+      "max": 0.2,
+      "step": 0.005
+    },
+    {
+      "key": "infraBoost",
+      "label": "Productivity benefit",
+      "default": 3,
+      "min": 0,
+      "max": 6,
+      "step": 0.1
+    },
+    {
+      "key": "foodCost",
+      "label": "Construction food cost",
+      "default": 0.2,
+      "min": 0,
+      "max": 2,
+      "step": 0.05
+    },
+    {
+      "key": "soilRecovery",
+      "label": "Soil recovery",
+      "default": 0.02,
+      "min": 0,
+      "max": 0.2,
+      "step": 0.005
+    },
+    {
+      "key": "erosion",
+      "label": "Land degradation",
+      "default": 0.035,
+      "min": 0,
+      "max": 0.3,
+      "step": 0.005
+    }
+  ],
+  "presets": [
+    {
+      "id": "settlement",
+      "title": "A place to settle",
+      "kicker": "01 / SETTLEMENT",
+      "description": "Follow food across a fertile landscape. Paint a new population patch and watch settlement patterns change.",
+      "model": "civilization",
+      "parameters": {
+        "dp": 0.05,
+        "df": 0.08,
+        "chiFood": 0.12,
+        "chiInfra": 0,
+        "growth": 0.4,
+        "regrowth": 0.35,
+        "consumption": 0.15,
+        "investment": 0,
+        "infraDecay": 0.025,
+        "infraBoost": 3,
+        "foodCost": 0.2,
+        "soilRecovery": 0.02,
+        "erosion": 0
+      },
+      "fields": [
+        "population",
+        "food",
+        "fertility"
+      ],
+      "duration": 100
+    },
+    {
+      "id": "collective_investment",
+      "title": "The things we build",
+      "kicker": "02 / COLLECTIVE INVESTMENT",
+      "description": "Settlements build infrastructure that outlasts its builders, improves food production, and attracts future growth.",
+      "model": "civilization",
+      "parameters": {
+        "dp": 0.05,
+        "df": 0.08,
+        "chiFood": 0.12,
+        "chiInfra": 0.03,
+        "growth": 0.4,
+        "regrowth": 0.35,
+        "consumption": 0.15,
+        "investment": 0.08,
+        "infraDecay": 0.025,
+        "infraBoost": 2.0,
+        "foodCost": 0.2,
+        "soilRecovery": 0.02,
+        "erosion": 0
+      },
+      "fields": [
+        "population",
+        "food",
+        "infrastructure",
+        "fertility"
+      ],
+      "duration": 100
+    },
+    {
+      "id": "overshoot",
+      "title": "The cost of growth",
+      "kicker": "03 / OVERSHOOT & RECOVERY",
+      "description": "Productive land wears down as population grows. Explore how investment, depletion, and slow recovery reshape settlement.",
+      "model": "civilization",
+      "parameters": {
+        "dp": 0.05,
+        "df": 0.08,
+        "chiFood": 0.12,
+        "chiInfra": 0.08,
+        "growth": 0.4,
+        "regrowth": 0.35,
+        "consumption": 0.15,
+        "investment": 0.2,
+        "infraDecay": 0.025,
+        "infraBoost": 4,
+        "foodCost": 0.2,
+        "soilRecovery": 0.008,
+        "erosion": 0.09
+      },
+      "fields": [
+        "population",
+        "food",
+        "soil",
+        "infrastructure"
+      ],
+      "duration": 100
+    },
+    {
+      "id": "agriculture",
+      "title": "Living off the land",
+      "kicker": "04 / BASELINE",
+      "description": "The original population\u2013food model: migration toward food, consumption, and renewal on a fixed fertile landscape.",
+      "model": "agriculture",
+      "parameters": {
+        "dp": 0.1,
+        "df": 0.1,
+        "chiFood": 0.1,
+        "chiInfra": 0,
+        "growth": 0.5,
+        "regrowth": 0.2,
+        "consumption": 0.02,
+        "investment": 0,
+        "infraDecay": 0.025,
+        "infraBoost": 3,
+        "foodCost": 0.2,
+        "soilRecovery": 0.02,
+        "erosion": 0
+      },
+      "fields": [
+        "population",
+        "food",
+        "fertility"
+      ],
+      "duration": 100
+    },
+    {
+      "id": "chemotaxis_demo",
+      "title": "Follow the gradient",
+      "kicker": "05 / TRANSPORT",
+      "description": "Population follows food while both fields spread. With no sources or sinks, transport conserves their totals.",
+      "model": "chemotaxis",
+      "parameters": {
+        "dp": 0.05,
+        "df": 0.02,
+        "chiFood": 0.3,
+        "chiInfra": 0,
+        "growth": 0,
+        "regrowth": 0,
+        "consumption": 0,
+        "investment": 0,
+        "infraDecay": 0.025,
+        "infraBoost": 3,
+        "foodCost": 0.2,
+        "soilRecovery": 0.02,
+        "erosion": 0
+      },
+      "fields": [
+        "population",
+        "food"
+      ],
+      "duration": 100
+    }
+  ]
+}

@@ -40,24 +40,31 @@ class Diffusion(LagrangianTerm):
     ``-8172`` vs. the ``-8192`` bound for ``alpha=1, n=32, dx=1/32``), the
     most strongly damped mode in the spectrum.
 
-    Boundary conditions.  Omitting the boundary faces from the sum *is* the
-    variational statement of the zero-flux (homogeneous Neumann) condition: a
+    Boundary conditions. For Neumann, omitting boundary faces from the sum is
+    the variational statement of the homogeneous zero-flux condition: a
     boundary cell simply has fewer faces, giving the one-sided update
     ``phi_0 <- (1-c) phi_0 + c phi_1``.  No ghost cells are needed anywhere, and
-    the resulting operator is exactly mass-conserving (every face contributes
-    ``+d`` to one cell and ``-d`` to its neighbour).
+    the resulting operator is exactly mass-conserving. Periodic mode includes
+    right/top wrap faces through ``roll``; those contributions telescope too.
 
     Positivity.  With ``c = dt*alpha/dx^2 <= 1/4`` every update is a convex
     combination of non-negative values, so non-negative data stays non-negative.
     """
 
-    def __init__(self, target, alpha):
+    def __init__(self, target, alpha, bc_type="neumann"):
         self.alpha = alpha
+        self.bc_type = bc_type
+        if bc_type not in ("neumann", "periodic"):
+            raise ValueError(f"Unsupported boundary condition {bc_type!r}.")
 
         def energy_fn(values, dx):
             phi = values[target]
-            dphi_dx = jnp.diff(phi, axis=1)   # (ny, nx-1) x-interior faces
-            dphi_dy = jnp.diff(phi, axis=0)   # (ny-1, nx) y-interior faces
+            if bc_type == "periodic":
+                dphi_dx = jnp.roll(phi, -1, axis=1) - phi
+                dphi_dy = jnp.roll(phi, -1, axis=0) - phi
+            else:
+                dphi_dx = jnp.diff(phi, axis=1)   # (ny, nx-1) x-interior faces
+                dphi_dy = jnp.diff(phi, axis=0)   # (ny-1, nx) y-interior faces
             return 0.5 * alpha * (jnp.sum(dphi_dx ** 2) + jnp.sum(dphi_dy ** 2))
 
         def max_rate_fn(values, dx):
@@ -71,4 +78,5 @@ class Diffusion(LagrangianTerm):
             target=target,
             energy_fn=energy_fn,
             max_rate_fn=max_rate_fn,
+            bc_type=bc_type,
         )

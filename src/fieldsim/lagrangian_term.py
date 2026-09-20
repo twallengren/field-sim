@@ -23,7 +23,7 @@ Each term also declares:
 
 
 class LagrangianTerm:
-    def __init__(self, name, target, energy_fn, max_rate_fn=None):
+    def __init__(self, name, target, energy_fn, max_rate_fn=None, bc_type=None):
         """
         Args:
             name: descriptive name, for debugging/reporting.
@@ -37,6 +37,7 @@ class LagrangianTerm:
         self.target = target
         self.energy_fn = energy_fn
         self.max_rate_fn = max_rate_fn
+        self.bc_type = bc_type
 
     def energy(self, values: dict, dx: float):
         """Total (already coefficient-weighted) energy contribution, a scalar."""

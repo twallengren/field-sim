@@ -21,11 +21,9 @@ def canonicalize(values):
     return array
 
 
-#: Boundary conditions the operator layer implements.  Zero-flux (homogeneous
-#: Neumann) is baked into the discrete operators themselves -- the diffusion
-#: energy simply omits boundary faces and the flux divergence zero-pads them --
-#: so ``bc_type`` is validated metadata, not something the field applies.
-SUPPORTED_BC_TYPES = ("neumann",)
+#: Boundary conditions implemented by the operator layer. ``Field`` stores and
+#: validates the metadata; it does not modify boundary cells itself.
+SUPPORTED_BC_TYPES = ("neumann", "periodic")
 
 
 class Field:
@@ -36,7 +34,8 @@ class Field:
     on the left/bottom edges and covered only ``[0, L - dx]``, an off-by-one
     domain; cell centring is also what makes the finite-volume flux and the
     face-difference energy consistent, and gives the DCT-II cosine modes as
-    exact eigenvectors of the discrete Neumann Laplacian.)
+    exact eigenvectors of the discrete Neumann Laplacian.) Both homogeneous
+    Neumann and wrap-around periodic operators use this grid.
 
     A ``Field`` is now a thin container: values plus metadata.  It applies no
     clipping and no boundary condition of its own.  In particular the old
@@ -56,10 +55,19 @@ class Field:
                 f"{bc_type!r}; supported types are {list(SUPPORTED_BC_TYPES)}."
             )
         shape = tuple(shape)
-        if len(shape) != 2 or any(int(s) < 2 for s in shape):
+        try:
+            normalized_shape = tuple(int(s) for s in shape)
+        except (TypeError, ValueError, OverflowError):
+            normalized_shape = ()
+        if (
+            len(shape) != 2
+            or len(normalized_shape) != 2
+            or any(n != s or n < 2 for n, s in zip(normalized_shape, shape))
+        ):
             raise ValueError(
                 f"Field {name!r}: shape must be a 2-tuple of ints >= 2, got {shape!r}."
             )
+        shape = normalized_shape
         if not dx > 0:
             raise ValueError(f"Field {name!r}: dx must be positive, got {dx!r}.")
 

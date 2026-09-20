@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Browser dependencies and generated test artifacts
+node_modules/
+web/test-results/
+web/playwright-report/

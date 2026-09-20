@@ -48,14 +48,20 @@ class SimulationRunner:
         self.dx = dx_values.pop()
 
         # The timestep comes from the physics, evaluated on the initial state.
-        self.dt = stable_dt(
-            self.fields,
-            config.lagrangian_terms,
-            config.flux_terms,
-            config.sources,
-            self.dx,
-            safety=config.safety,
-        )
+        try:
+            derived_dt = stable_dt(
+                self.fields,
+                config.lagrangian_terms,
+                config.flux_terms,
+                config.sources,
+                self.dx,
+                safety=config.safety,
+            )
+        except ValueError as exc:
+            if not config.adaptive or "no term imposes a positive rate" not in str(exc):
+                raise
+            derived_dt = config.max_dt
+        self.dt = min(config.max_dt, derived_dt) if config.adaptive else derived_dt
         self.steps = n_steps(config.total_time, self.dt)
 
         self.simulator = Simulator(
@@ -64,8 +70,13 @@ class SimulationRunner:
             sources=config.sources,
             flux_terms=config.flux_terms,
             dt=self.dt,
+            adaptive=config.adaptive,
+            safety=config.safety,
+            max_dt=config.max_dt,
         )
         self.history = []
+        self.history_times = []
+        self.history_steps = []
         self.diagnostics = None
         self.stride = max(1, math.ceil(self.steps / self.max_frames))
         self._running_min = {}
@@ -87,15 +98,42 @@ class SimulationRunner:
                 self._running_min[name] = local_min
                 self._running_max[name] = local_max
         self.history.append(frame)
+        self.history_times.append(float(self.simulator.time))
+        self.history_steps.append(int(self.simulator.step_count))
 
     def run(self):
         """Integrate the full run, recording a bounded, strided history."""
         self._snapshot()  # step 0, before any stepping.
-        for step in range(1, self.steps + 1):
-            self.simulator.step()
-            is_last = step == self.steps
-            if is_last or step % self.stride == 0:
+        if self.config.adaptive:
+            target = self.config.total_time
+            frame_interval = target / self.max_frames
+            next_frame_time = frame_interval
+            start_step = self.simulator.step_count
+            while self.simulator.time < target:
+                remaining = target - self.simulator.time
+                if (
+                    self.simulator.step_count > start_step
+                    and remaining <= 1e-12 * max(1.0, abs(target))
+                ):
+                    self.simulator.time = target
+                    break
+                self.simulator.step(remaining=remaining)
+                is_last = self.simulator.time >= target
+                if is_last or self.simulator.time >= next_frame_time:
+                    self._snapshot()
+                    while next_frame_time <= self.simulator.time:
+                        next_frame_time += frame_interval
+            if self.history_times[-1] != target:
                 self._snapshot()
+            self.steps = self.simulator.step_count
+            self.dt = self.simulator.dt
+            self.stride = None
+        else:
+            for step in range(1, self.steps + 1):
+                self.simulator.step()
+                is_last = step == self.steps
+                if is_last or step % self.stride == 0:
+                    self._snapshot()
         self.diagnostics = self.simulator.diagnostics
         return self.history
 

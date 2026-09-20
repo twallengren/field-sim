@@ -115,3 +115,76 @@ class ConsumptionSource(SourceTerm):
             coefficient=beta,
             max_rate_fn=max_rate_fn,
         )
+
+
+class CivilizationFoodSource(SourceTerm):
+    """Food renewal, consumption, and construction cost for civilization."""
+
+    def __init__(self, target, population, fertility, soil, infrastructure,
+                 regrowth, consumption, investment, infra_boost, food_cost):
+        def build(values):
+            P, F = values[population], values[target]
+            return investment * P * F / (1.0 + F)
+
+        def expression_fn(values):
+            P = values[population]
+            F = values[target]
+            K = values[fertility]
+            S = values[soil]
+            I = values[infrastructure]
+            capacity = K * S * (1.0 + infra_boost * I / (1.0 + I))
+            return (
+                regrowth * (capacity - F)
+                - consumption * P * F
+                - food_cost * build(values)
+            )
+
+        def max_rate_fn(values):
+            max_population = float(jnp.max(values[population]))
+            return (
+                abs(regrowth)
+                + abs(consumption) * max_population
+                + abs(food_cost * investment) * max_population
+            )
+
+        super().__init__(
+            name=f"{target} civilization balance",
+            target_field_name=target,
+            expression_fn=expression_fn,
+            max_rate_fn=max_rate_fn,
+        )
+
+
+class InfrastructureSource(SourceTerm):
+    """Construction ``investment*P*F/(1+F)`` minus infrastructure decay."""
+
+    def __init__(self, target, population, food, investment, decay):
+        def expression_fn(values):
+            P, F, I = values[population], values[food], values[target]
+            return investment * P * F / (1.0 + F) - decay * I
+
+        super().__init__(
+            name=f"{target} construction and decay",
+            target_field_name=target,
+            expression_fn=expression_fn,
+            max_rate_fn=lambda values: abs(decay),
+        )
+
+
+class SoilSource(SourceTerm):
+    """Bounded soil recovery and population-driven erosion."""
+
+    def __init__(self, target, population, recovery, erosion):
+        def expression_fn(values):
+            S = values[target]
+            return recovery * (1.0 - S) - erosion * values[population] * S
+
+        def max_rate_fn(values):
+            return abs(recovery) + abs(erosion) * float(jnp.max(values[population]))
+
+        super().__init__(
+            name=f"{target} recovery and erosion",
+            target_field_name=target,
+            expression_fn=expression_fn,
+            max_rate_fn=max_rate_fn,
+        )

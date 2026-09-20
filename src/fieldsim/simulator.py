@@ -19,8 +19,9 @@ _MAX_PENDING = 1000
 class Simulator:
     """Forward-Euler integrator for ``dphi/dt = -deltaF/delta phi - div(J) + S``.
 
-    Boundary conditions are built into the operators (zero-flux), so the step
-    loop no longer mutates boundary rows/columns.  The old ghost-copy Neumann
+    Boundary conditions are built into the operators (zero-flux Neumann or
+    wrap-around periodic), so the step loop never mutates boundary rows/columns.
+    The old ghost-copy Neumann
     update (``f[0] = f[1]`` ...) destroyed mass conservation and double-wrote
     the corners; it is gone.
 
@@ -46,11 +47,10 @@ class Simulator:
     Performance / host-device split
     -------------------------------
     The numerics live in :meth:`_step_values`, a **pure** function of the
-    ``{name: array}`` state dict that is wrapped in ``jax.jit`` once, in
-    ``__init__``.  Everything it needs that is *not* state -- the operator
-    objects, ``dt``, ``dx`` and the tuple of dynamic field names -- is closed
-    over, so it is baked into the compiled executable as a constant and the
-    trace happens exactly once (``Lagrangian.functional_derivative`` in
+    ``{name: array}`` state dict plus scalar timestep, wrapped in ``jax.jit``
+    once in ``__init__``. Operators, ``dx`` and dynamic field names are closed
+    over; ``dt`` remains a dynamic scalar so adaptive changes reuse the same
+    executable. The trace happens exactly once (``Lagrangian.functional_derivative`` in
     particular no longer re-differentiates the energy every step).
 
     Static (non-dynamic) fields are **passed through the argument dict**, not
@@ -75,7 +75,9 @@ class Simulator:
     """
 
     def __init__(self, fields: dict, lagrangian, sources: list, flux_terms: list,
-                 dt: float, check_every: int = 25, truncation_tolerance: float = 1e-8):
+                 dt: float = None, check_every: int = 25,
+                 truncation_tolerance: float = 1e-8, adaptive: bool = False,
+                 safety: float = 0.8, max_dt: float = 0.1):
         """
         Args:
             fields: dict of {field_name: Field}. All fields must share one shape
@@ -89,11 +91,26 @@ class Simulator:
                 the periodic check; diagnostics are still flushed on demand).
             truncation_tolerance: maximum fraction of a field's mass that the
                 positivity floor may remove in a single step.
+            adaptive: derive a fresh stable timestep before every step.
+            safety: fraction of the rate bound used by adaptive stepping.
+            max_dt: upper bound on an adaptive timestep.
         """
         if not fields:
             raise ValueError("Simulator requires at least one field.")
-        if not dt > 0:
+        if not adaptive and (dt is None or not math.isfinite(dt) or not dt > 0):
             raise ValueError(f"dt must be positive, got {dt!r}.")
+        if not 0.0 < safety < 1.0:
+            raise ValueError(f"safety must lie in (0, 1), got {safety!r}.")
+        if not math.isfinite(max_dt) or not max_dt > 0.0:
+            raise ValueError(f"max_dt must be positive, got {max_dt!r}.")
+        if (
+            not math.isfinite(truncation_tolerance)
+            or truncation_tolerance < 0.0
+        ):
+            raise ValueError(
+                "truncation_tolerance must be finite and non-negative, got "
+                f"{truncation_tolerance!r}."
+            )
 
         shapes = {name: tuple(f.shape) for name, f in fields.items()}
         unique_shapes = set(shapes.values())
@@ -106,14 +123,23 @@ class Simulator:
             raise ValueError(
                 f"All fields must share one grid spacing dx; got {spacings!r}."
             )
+        boundaries = {name: f.bc_type for name, f in fields.items()}
+        if len(set(boundaries.values())) != 1:
+            raise ValueError(
+                f"All fields must share one boundary condition; got {boundaries!r}."
+            )
 
         self.fields = fields
         self.shape = unique_shapes.pop()
         self.dx = next(iter(spacings.values()))
+        self.bc_type = next(iter(boundaries.values()))
         self.lagrangian = lagrangian
         self.sources = sources
         self.flux_terms = flux_terms
-        self.dt = float(dt)
+        self.adaptive = bool(adaptive)
+        self.safety = float(safety)
+        self.max_dt = float(max_dt)
+        self.dt = float(dt) if dt is not None else self.max_dt
         self.check_every = check_every
         self.truncation_tolerance = float(truncation_tolerance)
         self.time = 0.0
@@ -122,6 +148,13 @@ class Simulator:
         self.dynamic_names = tuple(
             name for name, field in fields.items() if field.is_dynamic
         )
+        for term in list(lagrangian.terms) + list(flux_terms):
+            term_bc = getattr(term, "bc_type", None)
+            if term_bc is not None and term_bc != self.bc_type:
+                raise ValueError(
+                    f"Term {term.name!r} uses boundary condition {term_bc!r}, "
+                    f"but fields use {self.bc_type!r}."
+                )
         self._diagnostics = {
             name: {"cumulative_truncated_mass": 0.0, "last_truncated_mass": 0.0}
             for name in self.dynamic_names
@@ -134,8 +167,6 @@ class Simulator:
         # callable object -- and therefore the same jit cache -- is reused for
         # every step; nothing here is rebuilt inside the loop.
         self._jitted_step = jax.jit(self._step_values)
-        self._compiled_for = (self.dt, self.dx)
-
         # Validate the timestep against the *initial* state before anyone can
         # step.  Without this, a hand-constructed Simulator with an oversized
         # dt takes up to ``check_every - 1`` garbage steps before the periodic
@@ -143,8 +174,9 @@ class Simulator:
         # ``stable_dt`` callers pass a dt that satisfies this by construction,
         # so only a hand-picked dt can trip it.  (A caller that deliberately
         # wants an unstable run can still assign to ``simulator.dt`` after
-        # construction; ``step`` recompiles and the periodic guard then catches
-        # it, which is how the runtime guard is exercised in the tests.)
+        # construction; the periodic guard catches it without retracing.)
+        if self.adaptive:
+            self.dt = self.safe_timestep()
         self.check_state()
 
     # ------------------------------------------------------------------
@@ -168,7 +200,7 @@ class Simulator:
     # Time stepping
     # ------------------------------------------------------------------
 
-    def _step_values(self, values: dict) -> tuple:
+    def _step_values(self, values: dict, dt) -> tuple:
         """One forward-Euler step + positivity floor, as a pure function.
 
         Args:
@@ -188,7 +220,6 @@ class Simulator:
         live in :meth:`sync_diagnostics` / :meth:`check_state`.
         """
         dx = self.dx
-        dt = self.dt
         new_values = {}
         neg_mass = {}
         mass = {}
@@ -219,24 +250,63 @@ class Simulator:
 
         return new_values, neg_mass, mass
 
-    def step(self):
-        """Advance the system by one forward-Euler step."""
-        if self._compiled_for != (self.dt, self.dx):
-            # dt/dx are baked into the compiled step; if a caller mutated them
-            # after construction, recompile rather than silently stepping with
-            # the old value.  Normal runs never take this branch.
-            self._jitted_step = jax.jit(self._step_values)
-            self._compiled_for = (self.dt, self.dx)
+    def safe_timestep(self, remaining=None):
+        """Return the current adaptive Euler step without mutating the state."""
+        total = self._current_rate()
+        dt = self.max_dt if total <= 0.0 else min(self.max_dt, self.safety / total)
+        if remaining is not None:
+            if not math.isfinite(remaining) or remaining <= 0.0:
+                raise ValueError(f"remaining must be positive, got {remaining!r}.")
+            dt = min(dt, float(remaining))
+        return dt
+
+    def _current_rate(self):
+        values = {name: field.get_values() for name, field in self.fields.items()}
+        return rate_sum(
+            values, self.lagrangian.terms, self.flux_terms, self.sources, self.dx
+        )
+
+    def step(self, dt=None, remaining=None):
+        """Advance by one step and return the step count.
+
+        Adaptive runs recompute a safe step from the current state. ``remaining``
+        caps the step so an :meth:`advance` call lands exactly on its target.
+        The timestep is a dynamic JAX argument, so changing it does not retrace.
+        """
+        if remaining is not None and (
+            not math.isfinite(remaining) or not remaining > 0.0
+        ):
+            raise ValueError(f"remaining must be positive, got {remaining!r}.")
+        if dt is None:
+            if self.adaptive:
+                step_dt = self.safe_timestep(remaining)
+            else:
+                step_dt = min(self.dt, float(remaining)) if remaining is not None else self.dt
+        else:
+            if not math.isfinite(dt) or not dt > 0.0:
+                raise ValueError(f"dt must be positive, got {dt!r}.")
+            step_dt = min(float(dt), float(remaining)) if remaining is not None else float(dt)
+        total = self._current_rate() if dt is not None else None
+        limit = self.safety if self.adaptive else 1.0
+        if total is not None and step_dt * total > limit * (1.0 + 1e-12):
+            raise RuntimeError(
+                f"Requested timestep dt={step_dt:.6g} is unsafe at t={self.time:.6g}: "
+                f"dt * rate_sum = {step_dt * total:.6g} > {limit:g}."
+            )
+        self.dt = float(step_dt)
 
         values = {name: field.get_values() for name, field in self.fields.items()}
-        new_values, neg_mass, mass = self._jitted_step(values)
+        dtype = next(iter(values.values())).dtype
+        new_values, neg_mass, mass = self._jitted_step(
+            values, jnp.asarray(step_dt, dtype=dtype)
+        )
 
         for name, updated in new_values.items():
             self.fields[name].set_values(updated)
 
-        self.time += self.dt
+        self.time += step_dt
         self.step_count += 1
-        self._pending.append((neg_mass, mass))
+        self._pending.append((neg_mass, mass, self.time, step_dt))
 
         if self.check_every and self.step_count % self.check_every == 0:
             self.sync_diagnostics()
@@ -244,6 +314,26 @@ class Simulator:
         elif len(self._pending) >= _MAX_PENDING:
             self.sync_diagnostics()
 
+        return self.step_count
+
+    def advance(self, duration):
+        """Advance by ``duration`` and land on the requested time exactly."""
+        if not math.isfinite(duration) or not duration > 0.0:
+            raise ValueError(f"duration must be positive, got {duration!r}.")
+        target = self.time + float(duration)
+        start_step = self.step_count
+        while self.time < target:
+            remaining = target - self.time
+            if (
+                self.step_count > start_step
+                and remaining <= 1e-12 * max(1.0, abs(target))
+            ):
+                self.time = target
+                break
+            self.step(remaining=remaining)
+            if target - self.time <= 1e-12 * max(1.0, abs(target)):
+                self.time = target
+                break
         return self.step_count
 
     def sync_diagnostics(self):
@@ -264,7 +354,7 @@ class Simulator:
 
         first_step = self.step_count - len(pending) + 1
         last_step = self.step_count
-        neg_pending, mass_pending = zip(*pending)
+        neg_pending, mass_pending, times_pending, _ = zip(*pending)
         # A single blocking transfer for the whole window (a handful of scalars).
         neg_host, mass_host = jax.device_get((neg_pending, mass_pending))
 
@@ -292,17 +382,18 @@ class Simulator:
                 violation = (
                     name,
                     first_step + index,
+                    float(times_pending[index]),
                     float(negs[index]),
                     float(masses[index]),
                     float(budgets[index]),
                 )
 
         if violation is not None:
-            name, step, truncated, mass, budget = violation
+            name, step, step_time, truncated, mass, budget = violation
             if not (math.isfinite(truncated) and math.isfinite(mass)):
                 raise RuntimeError(
                     f"Field {name!r} produced non-finite positivity diagnostics "
-                    f"at step {step} (t={step * self.dt:.6g}): truncated mass "
+                    f"at step {step} (t={step_time:.6g}): truncated mass "
                     f"{truncated!r}, post-floor mass {mass!r}. The state contains "
                     "NaN or inf, so the run has already diverged; the violation "
                     f"is reported at the end of its check window (steps "
@@ -310,7 +401,7 @@ class Simulator:
                 )
             raise RuntimeError(
                 f"Positivity floor truncated {truncated:.6g} of mass from field "
-                f"{name!r} at step {step} (t={step * self.dt:.6g}), exceeding the "
+                f"{name!r} at step {step} (t={step_time:.6g}), exceeding the "
                 f"allowed {budget:.6g} ({self.truncation_tolerance:g} x mass "
                 f"{mass:.6g}). The violation occurred within the last check "
                 f"window (steps {first_step}-{last_step}, checked every "
@@ -343,11 +434,12 @@ class Simulator:
         total = rate_sum(
             values, self.lagrangian.terms, self.flux_terms, self.sources, self.dx
         )
-        if self.dt * total > 1.0:
+        limit = self.safety if self.adaptive else 1.0
+        if not self.adaptive and self.dt * total > limit * (1.0 + 1e-12):
             raise RuntimeError(
                 f"Timestep dt={self.dt:.6g} violates the stability bound at step "
                 f"{self.step_count} (t={self.time:.6g}): dt * rate_sum = "
-                f"{self.dt * total:.6g} > 1 (rate_sum={total:.6g}). "
+                f"{self.dt * total:.6g} > {limit:g} (rate_sum={total:.6g}). "
                 "Reduce dt or the transport/reaction coefficients."
             )
         return total

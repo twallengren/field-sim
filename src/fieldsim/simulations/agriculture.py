@@ -102,7 +102,8 @@ DEFAULT_TOTAL_TIME = 10.0
 
 
 def get_config(seed: int = 0, n: int = DEFAULT_N,
-               total_time: float = DEFAULT_TOTAL_TIME) -> SimulationConfig:
+               total_time: float = DEFAULT_TOTAL_TIME,
+               bc_type: str = "neumann") -> SimulationConfig:
     """Build the agriculture simulation configuration.
 
     Args:
@@ -111,6 +112,13 @@ def get_config(seed: int = 0, n: int = DEFAULT_N,
         n: number of cells per edge (``dx = DOMAIN_KM / n``).
         total_time: physical duration to integrate, in years.
     """
+    try:
+        integer_n = int(n)
+    except (TypeError, ValueError, OverflowError):
+        integer_n = None
+    if integer_n is None or integer_n != n or integer_n < 2:
+        raise ValueError(f"n must be an integer >= 2, got {n!r}.")
+    n = integer_n
     L = DOMAIN_KM
     dx = L / n
     bounds = ((0.0, L), (0.0, L))
@@ -145,7 +153,7 @@ def get_config(seed: int = 0, n: int = DEFAULT_N,
     def fertility(x, y):
         return FERTILITY_FLOOR + fertility_bumps(x, y)
 
-    grid = {"shape": (n, n), "dx": dx, "bc_type": "neumann"}
+    grid = {"shape": (n, n), "dx": dx, "bc_type": bc_type}
 
     return SimulationConfig(
         name="Agriculture",
@@ -170,13 +178,14 @@ def get_config(seed: int = 0, n: int = DEFAULT_N,
             },
         },
         lagrangian_terms=[
-            Diffusion(target=POPULATION, alpha=D_P),
-            Diffusion(target=FOOD, alpha=D_F),
+            Diffusion(target=POPULATION, alpha=D_P, bc_type=bc_type),
+            Diffusion(target=FOOD, alpha=D_F, bc_type=bc_type),
         ],
         flux_terms=[
             # chi > 0: people move up the food gradient.
             AdvectionAlongGradientFlux(
-                target_field=POPULATION, gradient_field=FOOD, kappa=CHI
+                target_field=POPULATION, gradient_field=FOOD, kappa=CHI,
+                bc_type=bc_type,
             ),
         ],
         sources=[

@@ -27,5 +27,8 @@ fieldsim-run = "fieldsim.main:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+fieldsim = ["catalog.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
